@@ -10,6 +10,7 @@ Repo: <https://github.com/ni3ra5/tool-wheel> (public).
 | --- | --- | --- |
 | macOS | Working, used daily. Settings complete. | v0.3.0 (wheel, settings, icon). Reorder/glide and centred Settings are on `main`, not released yet. |
 | Windows | Preview, being tested on a real PC (Windows 11). Wheel, Settings window and focus handling work. | v0.1.0 (wheel, Settings, open-or-bring-forward). Portable `.exe`, no installer. |
+| Website | Landing page in `site/` with download buttons and a playable wheel demo. Not deployed yet. | – |
 
 ## Architecture
 
@@ -29,6 +30,7 @@ windows/    C# / WPF, .NET 8
   Native.cs          Win32: key state, cursor/monitors, mask key, other apps' windows, focus, shell icons
   Click.cs       detent sound
 assets/     icon.png, preview.png (README)
+site/       landing page for Vercel: plain index.html, style.css, script.js (+ copies of icon.png, preview.png)
 .github/workflows/  release-mac.yml (mac-v* tags), windows.yml (every windows/ change; releases on windows-v* tags)
 ```
 
@@ -88,9 +90,21 @@ Newest at the bottom. Each entry: what was decided, and why.
 - **The Settings app list also includes apps pinned to the taskbar or on the desktop**, because an app whose Start menu shortcut is missing (Chrome on the test PC) isn't in All apps. **Start entries with arguments** (Chrome web apps, Git Bash, mmc consoles) **are saved by app ID**, not as the bare `.exe`, which opened the wrong thing; these may start another copy instead of reusing a window.
 - **Admin windows in front block the shortcut; left as a known limit** rather than running Tool Wheel as admin. Chosen by the user over an optional run-as-admin setting and a signed `uiAccess` build.
 - **First Windows release `windows-v0.1.0`: portable self-contained `.exe`**, unsigned, no installer. Shareable now that the wheel works on a real PC; an installer and signing can come later.
+- **Windows click volume 0.035, down from 0.15** (the user found it too loud, then still too loud at 0.07). The Mac stays at 0.15, a deliberate gap in the shared sound recipe.
+- **Windows click plays through one WASAPI stream (NAudio) held open while the wheel is up**, like the Mac's AVAudioEngine; replaced `SoundPlayer`. `SoundPlayer` opened a stream per click and an idle device ate the start of the 45 ms sound, so slow turns crackled and broke (confirmed with a loopback recording; now every click matches the intended sound). The stream reopens on every wheel open, so a changed default device is picked up. NAudio.Wasapi is the Windows app's first package dependency.
 - **Default Notepad, Calculator and Settings are their Store apps** (`shell:AppsFolder\…`) when installed. On Windows 11 the old `notepad.exe`/`calc.exe` only hand off to them, so their windows couldn't be matched.
 - **Icons via the shell's `IShellItemImageFactory`**, which covers files, folders and Store apps; cached per session.
 - **`--snapshot out.png` / `--snapshot-settings out.png`** render the wheel or Settings to a PNG, for checking visuals without the shortcut (like the Mac's `--snapshot`).
+- **Landing page in `site/`, plain HTML/CSS/JS with no build step**, hosted on Vercel (project Root Directory = `site`). Small enough not to need a framework.
+  - **Download buttons fetch the newest release from the GitHub API** and link its zip directly (Mac: newest `mac-v*` or the older plain `v*` tags; Windows: `win-x64`). On failure they fall back to the Releases page. The visitor's OS gets an accent "LED" and goes first.
+  - **Playable demo styled like the Settings window**: dark dotted panel, the wheel with trash/grip pills, app list on the right. Hover turns the knob in detents and lifts the slice; click "opens" (adds the running dot); drag a slice or grip to reorder (others glide); trash or the list removes; the list adds (up to 12). On touch, press the knob and slide out, release to open.
+  - **Same geometry, accent and easing as the apps**, in a 520-unit SVG viewBox (room for the pills). The site's frosted disc uses a real `backdrop-filter`.
+  - **Generic, self-drawn app icons** (Browser, Mail, Files…) instead of real brand icons.
+  - Typeface Geist / Geist Mono; page follows the system light/dark theme, the demo panel stays dark like Settings.
+- **Website hero trimmed to icon, name, one line and the two buttons** (user: too much text). Dropped the shortcut keycaps line and the fine print (ARM64 link, unsigned warning); "Install notes" moved to the footer.
+- **Download buttons are equal width (210 px) and just say "Mac" / "Windows" with "Download vX.Y.Z"**. On hover they rise with a deeper skirt, their LED lights and the arrow turns accent; pressed, they sink.
+- **No dot pattern on the demo panel**; it's plain `#181818`. The page background keeps its dots.
+- **No sound in the website demo** (replaced the opt-in "Sound on" toggle and the synthesised thock). Detents are silent; phones that support it get a 4 ms vibration per detent.
 
 ## Next
 
@@ -99,6 +113,9 @@ Newest at the bottom. Each entry: what was decided, and why.
 - Frosted backdrop (likely needs a WinUI/DWM approach).
 - `.lnk` tools (hand-edited JSON only) always start a new copy and get no "open" dot; resolve the shortcut target to match windows.
 - Installer (Inno Setup or MSIX) for a Start menu entry and uninstaller; code signing to drop the SmartScreen warning.
+
+**Website**
+- Deploy `site/` to Vercel (Root Directory `site`, framework "Other", no build command) and add the URL to the README.
 
 **macOS**
 - Release `mac-v0.4.0` with reordering, gliding icons and the centred Settings window.
@@ -119,4 +136,5 @@ Newest at the bottom. Each entry: what was decided, and why.
 - Check Mac visuals without the hotkey: `mac/.build/debug/ToolWheel --snapshot out.png` (skips the blur).
 - Re-render icons after changing the knob: `mac/scripts/make-icon.sh`.
 - Windows: `cd windows && dotnet build`, then run `bin/Debug/net8.0-windows/ToolWheel.exe` (quit from the tray icon before rebuilding). Config is `%APPDATA%\ToolWheel\tools.json`; delete it to get the defaults back.
+- Website locally: `python -m http.server 4173 --directory site` (or the `site` entry in `.claude/launch.json`).
 - Windows visuals without the shortcut: `bin/Debug/net8.0-windows/ToolWheel.exe --snapshot out.png` (or `--snapshot-settings`).

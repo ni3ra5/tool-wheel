@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tool Wheel</title>
+  <meta name="description" content="A tactile radial launcher for macOS and Windows. Hold a shortcut and your apps fan out around the cursor on a clicky dial.">
+  <meta name="theme-color" content="#ECECEA">
+  <meta property="og:title" content="Tool Wheel">
+  <meta property="og:description" content="Hold a shortcut and your apps fan out around the cursor on a clicky dial. For macOS and Windows.">
+  <meta property="og:image" content="preview.png">
+  <meta name="twitter:card" content="summary">
+  <link rel="icon" href="icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@500&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="#"><img src="icon.png" alt="" width="28" height="28">Tool Wheel</a>
+  <nav>
+    <a href="#try">Try it</a>
+    <a href="#features">Features</a>
+    <a href="https://github.com/ni3ra5/tool-wheel">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero">
+    <img class="hero-icon" src="icon.png" alt="" width="112" height="112">
+    <h1>Tool Wheel</h1>
+    <p class="lede">Your apps on a clicky dial, right at the cursor.</p>
+
+    <div class="downloads">
+      <a class="key" id="dl-mac" href="https://github.com/ni3ra5/tool-wheel/releases">
+        <span class="led" aria-hidden="true"></span>
+        <span class="key-text"><strong>Mac</strong><small data-meta>Download</small></span>
+        <svg class="arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v10M3.5 8.5 8 13l4.5-4.5"/></svg>
+      </a>
+      <a class="key" id="dl-win" href="https://github.com/ni3ra5/tool-wheel/releases">
+        <span class="led" aria-hidden="true"></span>
+        <span class="key-text"><strong>Windows</strong><small data-meta>Download</small></span>
+        <svg class="arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v10M3.5 8.5 8 13l4.5-4.5"/></svg>
+      </a>
+    </div>
+  </section>
+
+  <section class="try" id="try">
+    <div class="section-head">
+      <span class="tag">Try it</span>
+      <h2>Play with the wheel</h2>
+      <p>Hover to turn the knob, click a slice to open it, drag it round to reorder. Add apps from the list, and use the trash to take them off.</p>
+    </div>
+
+    <div class="demo">
+      <div class="demo-bar">
+        <span class="demo-title">Tool Wheel · Settings</span>
+        <div class="demo-actions">
+          <button type="button" class="chip" id="reset">Reset</button>
+        </div>
+      </div>
+
+      <div class="demo-body">
+        <div class="stage-wrap">
+          <div class="stage" id="stage">
+            <div class="frost" aria-hidden="true"></div>
+            <svg id="wheel" viewBox="0 0 520 520" role="img" aria-label="Tool Wheel demo. Use the app list to add or remove apps."></svg>
+          </div>
+        </div>
+
+        <aside class="apps" aria-label="Apps">
+          <div class="apps-inner">
+            <label class="search">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
+              <input id="search" type="search" placeholder="Search apps" autocomplete="off" spellcheck="false">
+            </label>
+            <div class="apps-meta"><span>Apps</span><span id="count">0 / 12</span></div>
+            <ul id="list" class="list"></ul>
+          </div>
+        </aside>
+      </div>
+
+      <div class="demo-foot">
+        <ul class="hints">
+          <li><b>Hover</b> turn the knob</li>
+          <li><b>Click</b> open</li>
+          <li><b>Drag</b> reorder</li>
+          <li><b>Trash</b> remove</li>
+        </ul>
+        <span class="status" id="status" aria-live="polite"></span>
+      </div>
+    </div>
+    <p class="note">The real wheel opens around your cursor while you hold the shortcut. On a touch screen, press the knob and slide out to a slice.</p>
+  </section>
+
+  <section class="features" id="features">
+    <div class="section-head">
+      <span class="tag">Features</span>
+      <h2>Small, quick, and nice to touch</h2>
+    </div>
+    <ol class="grid">
+      <li>
+        <span class="num">01</span>
+        <h3>Opens where you are</h3>
+        <p>Hold the shortcut and the wheel appears around your cursor, on whichever screen you're on.</p>
+      </li>
+      <li>
+        <span class="num">02</span>
+        <h3>Feels physical</h3>
+        <p>Molded-plastic slices and a knob that turns in 10° detents, each with a soft, heavy <em>thock</em>.</p>
+      </li>
+      <li>
+        <span class="num">03</span>
+        <h3>Click, or just let go</h3>
+        <p>Click a tool, or hover it and release the shortcut. Pick whichever you like in Settings.</p>
+      </li>
+      <li>
+        <span class="num">04</span>
+        <h3>Knows what's open</h3>
+        <p>A small dot marks apps that are already running. Picking one brings its window forward instead of opening another copy.</p>
+      </li>
+      <li>
+        <span class="num">05</span>
+        <h3>No permissions</h3>
+        <p>No accessibility prompts and no keyboard hooks. It only watches which modifier keys are held.</p>
+      </li>
+      <li>
+        <span class="num">06</span>
+        <h3>Yours to arrange</h3>
+        <p>Search your installed apps to add them, drag to reorder, trash to remove. It all lives in one <code>tools.json</code>.</p>
+      </li>
+    </ol>
+  </section>
+</main>
+
+<footer class="foot">
+  <span><img src="icon.png" alt="" width="20" height="20">Tool Wheel for macOS and Windows</span>
+  <span class="foot-links">
+    <a href="https://github.com/ni3ra5/tool-wheel#-install">Install notes</a>
+    <a href="https://github.com/ni3ra5/tool-wheel">Source on GitHub</a>
+  </span>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>

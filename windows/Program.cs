@@ -51,6 +51,14 @@ sealed class Controller
         configStamp = File.GetLastWriteTimeUtc(Store.ConfigPath);
 
         wheel.MouseDown += (_, _) => Click();
+        // The click's audio stream is open only while the wheel is; closed a moment after, so the last click finishes.
+        var silence = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        silence.Tick += (_, _) => { silence.Stop(); if (!wheel.IsVisible) clicker.Stop(); };
+        wheel.IsVisibleChanged += (_, _) =>
+        {
+            if (wheel.IsVisible) clicker.Start();
+            else silence.Start();
+        };
 
         var menu = new System.Windows.Forms.ContextMenuStrip();
         var open = menu.Items.Add("Settings…", null, (_, _) => OpenSettings());
