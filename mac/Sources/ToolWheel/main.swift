@@ -165,7 +165,7 @@ let outerRadius: CGFloat = 172
 let centerRadius: CGFloat = 56
 let gap: CGFloat = 2             // constant width between neighbouring tools
 let knobGap: CGFloat = 1.5       // between the knob and the tools' inner edge
-let backdropPadding: CGFloat = gap  // frosted rim around the wheel, same width as the gaps between tools
+let backdropInset: CGFloat = 8   // frosted backdrop stops this far inside the rim: it fills the gaps but never shows past the edge
 let corner: CGFloat = 6          // rounding on wedge corners
 let dialRim: CGFloat = 5         // the dial's outer ring, which the light fills
 let gearOffset: CGFloat = 26     // settings icon sits this far below the wheel's centre
@@ -399,13 +399,10 @@ struct WheelView: View {
         .shadow(color: .black.opacity(0.14), radius: 1, y: 1)   // contact
         .shadow(color: .black.opacity(0.16), radius: 7, y: 5)   // cast
         .background {
-            let d = (outerRadius + backdropPadding) * 2
+            let d = (outerRadius - backdropInset) * 2
+            // Where the live blur can't be drawn (snapshots, Settings), a plain disc stands in for the frosted glass.
             ZStack {
-                // Where the live blur can't be drawn (snapshots, Settings), a plain disc stands in for the frosted glass.
                 if backdrop { BackdropBlur(diameter: d) } else { Circle().fill(Color(white: 0.86)) }
-                // Lit from above, like the knob: bright edge on top fading out toward the bottom.
-                Circle().strokeBorder(LinearGradient(colors: [.white.opacity(0.95), .white.opacity(0.05)],
-                                                     startPoint: .top, endPoint: .bottom), lineWidth: 1)
             }
             .frame(width: d, height: d)
         }

@@ -15,7 +15,7 @@ namespace ToolWheel;
 static class Look
 {
     public const double Size = 400, Outer = 172, Center = 56, Gap = 2, KnobGap = 1.5, Corner = 6, DialRim = 5,
-        GearOffset = 26, GearHit = 14, RunningDot = 82, IconRadius = (Center + Outer) / 2 + 4;
+        GearOffset = 26, GearHit = 14, RunningDot = 82, IconRadius = (Center + Outer) / 2 + 4, BackdropInset = 8;
     public const double Detent = 2 * Math.PI / 36;  // 10° per click
 
     public static readonly Color Accent = Color.FromRgb(0xFF, 0x3C, 0x00);  // #FF3C00
@@ -231,15 +231,14 @@ sealed class WheelView : Grid
         body.Children.Add(knob);
         if (!editing)
         {
-            // Stand-in for the Mac's frosted glass: a light disc just past the rim, its edge lit from above.
+            // Stand-in for the Mac's frosted glass: a light disc that stops inside the rim, so it fills the gaps
+            // between slices but never shows past the edge.
             // ponytail: no live blur; WPF transparent windows can't host Windows' acrylic. Revisit with a WinUI backdrop.
             Children.Add(new Ellipse
             {
-                Width = (Look.Outer + Look.Gap) * 2,
-                Height = (Look.Outer + Look.Gap) * 2,
+                Width = (Look.Outer - Look.BackdropInset) * 2,
+                Height = (Look.Outer - Look.BackdropInset) * 2,
                 Fill = new SolidColorBrush(Color.FromRgb(0xDB, 0xDB, 0xDB)),
-                Stroke = new LinearGradientBrush(Color.FromArgb(242, 255, 255, 255), Color.FromArgb(13, 255, 255, 255), 90),
-                StrokeThickness = 1,
             });
         }
         Children.Add(body);

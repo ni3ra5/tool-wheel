@@ -105,6 +105,7 @@ Newest at the bottom. Each entry: what was decided, and why.
 - **Download buttons are equal width (210 px) and just say "Mac" / "Windows" with "Download vX.Y.Z"**. On hover they rise with a deeper skirt, their LED lights and the arrow turns accent; pressed, they sink.
 - **No dot pattern on the demo panel**; it's plain `#181818`. The page background keeps its dots.
 - **No sound in the website demo** (replaced the opt-in "Sound on" toggle and the synthesised thock). Detents are silent; phones that support it get a 4 ms vibration per detent.
+- **Backdrop stops inside the wheel** (8 px short of the rim) instead of extending one gap past it. It still fills the gaps between slices but never shows outside the edge. Its lit border went with it (no rim left to light). Replaces the 2026-10-08 "rim one gap past the wheel" decision. Mac, Windows and the website demo.
 
 ## Next
 

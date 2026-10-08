@@ -310,29 +310,18 @@ h2 {
   100% { opacity: 1; transform: scale(1); }
 }
 
-/* Frosted glass one gap past the rim, its border bright at the top and fading toward the bottom. */
+/* Frosted glass that stops 8 units inside the rim: it fills the gaps between slices but never shows past the edge. */
 .frost {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 66.923%; /* (172 + 2) * 2 / 520 */
+  width: 63.077%; /* (172 - 8) * 2 / 520 */
   aspect-ratio: 1;
   transform: translate(-50%, -50%);
   border-radius: 50%;
   background: rgba(222, 222, 222, .86);
   -webkit-backdrop-filter: blur(18px) saturate(1.2);
   backdrop-filter: blur(18px) saturate(1.2);
-}
-.frost::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  padding: 1px;
-  background: linear-gradient(rgba(255, 255, 255, .95), rgba(255, 255, 255, .05));
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
 }
 
 #wheel {
