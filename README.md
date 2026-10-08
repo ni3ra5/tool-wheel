@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="preview.png" alt="Tool Wheel" width="300">
+<img src="Resources/AppIcon.png" alt="Tool Wheel icon" width="128">
 
 # Tool Wheel
 
@@ -13,6 +13,10 @@ Hold a shortcut, and your favourite apps fan out around the cursor on a clicky d
 ![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white)
 
 [**⬇ Download the latest release**](https://github.com/ni3ra5/tool-wheel-mac/releases/latest)
+
+<br>
+
+<img src="preview.png" alt="The wheel, open" width="300">
 
 </div>
 

@@ -15,5 +15,6 @@ for size in 16 32 128 256 512; do
 done
 mkdir -p Resources
 iconutil -c icns "$SET" -o Resources/AppIcon.icns
+sips -z 256 256 "$TMP/icon.png" --out Resources/AppIcon.png >/dev/null  # for the README
 rm -rf "$TMP"
-echo "Wrote Resources/AppIcon.icns"
+echo "Wrote Resources/AppIcon.icns and AppIcon.png"
