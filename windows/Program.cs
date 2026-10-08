@@ -1,10 +1,10 @@
 using System;
-using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
@@ -13,8 +13,14 @@ namespace ToolWheel;
 static class Program
 {
     [STAThread]
-    static void Main()
+    static void Main(string[] args)
     {
+        if (args.Length == 2 && args[0] is "--snapshot" or "--snapshot-settings")
+        {
+            Snapshot.Run(settings: args[0] == "--snapshot-settings", args[1]);
+            return;
+        }
+
         using var single = new Mutex(true, "ToolWheel.SingleInstance", out bool first);
         if (!first) return;  // already running (it lives in the tray)
 
@@ -31,6 +37,7 @@ sealed class Controller
     readonly WheelWindow wheel = new();
     readonly Clicker clicker = new();
     readonly System.Windows.Forms.NotifyIcon tray;
+    SettingsWindow? settings;
     Config config;
     DateTime configStamp;
     bool waitForRelease;  // after opening something, don't reopen until the keys are let go
@@ -46,10 +53,8 @@ sealed class Controller
         wheel.MouseDown += (_, _) => Click();
 
         var menu = new System.Windows.Forms.ContextMenuStrip();
-        menu.Items.Add("Edit tools…", null, (_, _) => EditTools());
-        var login = new System.Windows.Forms.ToolStripMenuItem("Open at login") { Checked = LaunchAtLogin.IsEnabled, CheckOnClick = true };
-        login.CheckedChanged += (_, _) => LaunchAtLogin.Set(login.Checked);
-        menu.Items.Add(login);
+        var open = menu.Items.Add("Settings…", null, (_, _) => OpenSettings());
+        open.Font = new System.Drawing.Font(open.Font, System.Drawing.FontStyle.Bold);  // what double-click does
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
         menu.Items.Add("Quit Tool Wheel", null, (_, _) => Quit());
         tray = new System.Windows.Forms.NotifyIcon
@@ -59,8 +64,9 @@ sealed class Controller
             ContextMenuStrip = menu,
             Visible = true,
         };
+        tray.DoubleClick += (_, _) => OpenSettings();
         if (firstRun)
-            tray.ShowBalloonTip(5000, "Tool Wheel is running", $"Hold {Describe(config.Trigger)} anywhere to open the wheel.", System.Windows.Forms.ToolTipIcon.None);
+            tray.ShowBalloonTip(5000, "Tool Wheel is running", $"Hold {Keys.Describe(config.Trigger)} anywhere to open the wheel.", System.Windows.Forms.ToolTipIcon.None);
 
         // ponytail: polls key state at 60Hz, which needs no keyboard hook. Switch to a low-level hook if a
         // non-modifier shortcut (e.g. Ctrl+Space) is ever wanted.
@@ -69,7 +75,8 @@ sealed class Controller
 
     void Tick()
     {
-        if (++ticks % 60 == 0) ReloadIfEdited();  // picks up a changed shortcut without a restart
+        if (++ticks % 60 == 0) ReloadIfEdited();  // picks up a hand-edited shortcut without a restart
+        if (SettingsWindow.Recording) return;     // holding a new shortcut in Settings mustn't open the wheel
 
         bool held = Native.HeldMods() == config.Trigger;
         if (!held) waitForRelease = false;
@@ -77,12 +84,12 @@ sealed class Controller
         if (held && !wheel.IsVisible && !waitForRelease) Open();
         else if (!held && wheel.IsVisible)
         {
+            wheel.Hide();
             if (config.ReleaseToOpen == true)
             {
-                if (wheel.HoveredTool is { } tool) tool.Launch();
-                else if (wheel.GearHovered) EditTools();
+                if (wheel.View.HoveredTool is { } tool) Apps.Open(tool);
+                else if (wheel.View.GearHovered) OpenSettings();
             }
-            wheel.Hide();
         }
 
         if (wheel.IsVisible)
@@ -90,14 +97,14 @@ sealed class Controller
             Native.GetCursorPos(out var p);
             Native.GetWindowRect(wheel.Handle, out var r);
             double dx = (p.X - (r.Left + r.Right) / 2.0) / scale, dy = (p.Y - (r.Top + r.Bottom) / 2.0) / scale;
-            if (wheel.Track(dx, dy)) clicker.Click();
+            if (wheel.View.Track(dx, dy)) clicker.Click();
         }
     }
 
     void Open()
     {
         config = Store.Load();
-        wheel.Load(config.Wheel);
+        wheel.View.Load(config.Wheel, Apps.Running(config.Wheel));
 
         // Centre on the cursor, nudged inward if it would spill off the screen.
         Native.GetCursorPos(out var p);
@@ -108,23 +115,23 @@ sealed class Controller
         int y = Math.Clamp(p.Y - size / 2, work.Top, Math.Max(work.Top, work.Bottom - size));
         wheel.Show();
         Native.PlaceTopmost(wheel.Handle, x, y, size);
-        wheel.PlayOpen();
+        wheel.View.PlayOpen();
 
         if ((config.Trigger & (Mods.Win | Mods.Alt)) != 0) Native.TapMaskKey();
     }
 
     void Click()
     {
-        if (wheel.GearHovered)
+        if (wheel.View.GearHovered)
         {
             wheel.Hide();
             waitForRelease = true;
-            EditTools();
+            OpenSettings();
         }
-        else if (wheel.HoveredTool is { } tool)
+        else if (wheel.View.HoveredTool is { } tool)
         {
-            wheel.Press();
-            tool.Launch();
+            wheel.View.Press();
+            Apps.Open(tool);
             waitForRelease = true;
             wheel.Dispatcher.InvokeAsync(async () => { await Task.Delay(120); wheel.Hide(); });  // let the press show
         }
@@ -138,18 +145,27 @@ sealed class Controller
         config = Store.Load();
     }
 
-    /// ponytail: until the Settings window is ported, editing means the JSON file in Notepad.
-    static void EditTools() => Process.Start("notepad.exe", $"\"{Store.ConfigPath}\"");
+    void OpenSettings()
+    {
+        if (settings is null)
+        {
+            settings = new SettingsWindow(Store.Load(), saved =>
+            {
+                config = saved;
+                configStamp = File.GetLastWriteTimeUtc(Store.ConfigPath);
+            });
+            settings.Closed += (_, _) => settings = null;
+            settings.Show();
+        }
+        if (settings.WindowState == WindowState.Minimized) settings.WindowState = WindowState.Normal;
+        Native.Activate(settings.Handle);
+    }
 
     void Quit()
     {
         tray.Visible = false;
         Application.Current.Shutdown();
     }
-
-    static string Describe(Mods m) => string.Join("+",
-        new[] { (Mods.Ctrl, "Ctrl"), (Mods.Alt, "Alt"), (Mods.Shift, "Shift"), (Mods.Win, "Win") }
-            .Where(k => m.HasFlag(k.Item1)).Select(k => k.Item2));
 }
 
 static class LaunchAtLogin
@@ -163,5 +179,53 @@ static class LaunchAtLogin
         using var key = Registry.CurrentUser.CreateSubKey(RunKey);
         if (on) key.SetValue(Name, $"\"{Environment.ProcessPath}\"");
         else key.DeleteValue(Name, throwOnMissingValue: false);
+    }
+}
+
+/// `--snapshot out.png` draws the wheel (second tool hovered); `--snapshot-settings out.png` draws Settings.
+/// For checking visuals without the shortcut, like the Mac's --snapshot. Reads tools.json but never writes it.
+static class Snapshot
+{
+    public static void Run(bool settings, string path)
+    {
+        var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        FrameworkElement content;
+        Window window;
+        if (settings)
+        {
+            window = new SettingsWindow(Store.Load(), _ => { });
+            content = (FrameworkElement)window.Content;
+        }
+        else
+        {
+            var view = new WheelView();
+            var config = Store.Load();
+            view.Load(config.Wheel, Apps.Running(config.Wheel));
+            if (config.Wheel.Count > 1) view.SetHover(1, null);
+            content = new System.Windows.Controls.Border { Child = view, Background = new SolidColorBrush(Color.FromRgb(0x6B, 0x7B, 0x8C)) };  // a desktop-ish backdrop
+            window = new Window { Content = content, SizeToContent = SizeToContent.WidthAndHeight, WindowStyle = WindowStyle.None };
+        }
+        window.WindowStartupLocation = WindowStartupLocation.Manual;
+        window.Left = -20000;  // off screen
+        window.ShowInTaskbar = false;
+        window.ShowActivated = false;
+        window.Show();
+
+        // Long enough for the app list and its icons to load and the hover to settle.
+        var wait = new DispatcherTimer { Interval = TimeSpan.FromSeconds(settings ? 4 : 1) };
+        wait.Tick += (_, _) =>
+        {
+            wait.Stop();
+            app.Dispatcher.InvokeAsync(() =>
+            {
+                var image = new RenderTargetBitmap((int)(content.ActualWidth * 2), (int)(content.ActualHeight * 2), 192, 192, PixelFormats.Pbgra32);
+                image.Render(content);
+                var png = new PngBitmapEncoder { Frames = { BitmapFrame.Create(image) } };
+                using (var file = File.Create(path)) png.Save(file);
+                app.Shutdown();
+            }, DispatcherPriority.ContextIdle);
+        };
+        wait.Start();
+        app.Run();
     }
 }

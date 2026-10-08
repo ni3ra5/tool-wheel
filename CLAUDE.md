@@ -13,6 +13,6 @@ Whenever a decision is made – by the user or agreed in conversation – add it
 ## Conventions
 
 - Mac and Windows share the same geometry numbers, accent `#FF3C00`, sound recipe and `tools.json` shape. Change one, change both (or note the gap in `plan.md`).
-- Check Mac visuals with `mac/.build/debug/ToolWheel --snapshot out.png`. Windows can't run here; it's compile-checked by the `Windows` GitHub workflow.
+- Check Mac visuals with `mac/.build/debug/ToolWheel --snapshot out.png`. Windows builds and runs locally on the Windows machine (`cd windows && dotnet build`); CI also compile-checks it via the `Windows` workflow.
 - Commits use khan.nibras28@gmail.com (set in local git config). Commit and push only when asked.
 - Releases: tag `mac-vX.Y.Z` or `windows-vX.Y.Z`; GitHub Actions builds and attaches the downloads.

@@ -9,7 +9,7 @@ Repo: <https://github.com/ni3ra5/tool-wheel> (public).
 | Platform | State | Latest release |
 | --- | --- | --- |
 | macOS | Working, used daily. Settings complete. | v0.3.0 (wheel, settings, icon). Reorder/glide and centred Settings are on `main`, not released yet. |
-| Windows | Preview. Compiles in CI; **never run on a real PC yet**. No Settings window. | None yet (CI artifact only). |
+| Windows | Preview, being tested on a real PC (Windows 11). Wheel, Settings window and focus handling work. | v0.1.0 (wheel, Settings, open-or-bring-forward). Portable `.exe`, no installer. |
 
 ## Architecture
 
@@ -21,10 +21,12 @@ mac/        Swift / SwiftUI + AppKit, Swift Package (no Xcode project)
   scripts/build-app.sh              universal .app + zip
   scripts/make-icon.sh              icon for every platform
 windows/    C# / WPF, .NET 8
-  Program.cs     entry, tray, 60Hz loop, open/click/release, login item
-  WheelWindow.cs drawing (same numbers as the Mac)
-  Config.cs      tools.json
-  Native.cs      Win32: key state, cursor/monitors, mask key, shell icons
+  Program.cs         entry, tray, 60Hz loop, open/click/release, login item, --snapshot modes
+  WheelWindow.cs     WheelView (drawing, same numbers as the Mac; edit mode for Settings) and the floating window
+  SettingsWindow.cs  settings window, wheel editor, app list, shortcut recorder
+  Apps.cs            open-or-bring-forward, installed apps (Start menu's All apps)
+  Config.cs          tools.json
+  Native.cs          Win32: key state, cursor/monitors, mask key, other apps' windows, focus, shell icons
   Click.cs       detent sound
 assets/     icon.png, preview.png (README)
 .github/workflows/  release-mac.yml (mac-v* tags), windows.yml (every windows/ change; releases on windows-v* tags)
@@ -77,14 +79,26 @@ Newest at the bottom. Each entry: what was decided, and why.
   - No live blur yet (WPF transparent windows can't host acrylic); a grey disc stands in.
 - **Windows is compile-checked in GitHub Actions only**, since there's no Windows machine here.
 - **Keep `plan.md` as the running record**, with every decision logged here (see `CLAUDE.md`).
+- **Windows dev machine set up** (Windows 11, .NET 8 SDK): the app is now built and run locally, not only compile-checked in CI. First fix: `Tool.IsRunning` was being saved into `tools.json`; it's now `[JsonIgnore]`.
+- **Opening a tool that's already open brings its window forward** (restored if minimised, to maximised if it was) instead of starting another copy, like the Mac. Before, File Explorer opened a new window every time. Windows are matched to tools by `.exe`, or by app ID for Store apps; a folder tool reuses an Explorer window already showing it.
+- **The wheel hands focus to what it opens.** Windows only lets the front app give focus away and the wheel never takes focus, so new apps opened behind (taskbar button flashing). It now briefly joins the front app's input queue to allow it, then watches up to 5 s for the new window and raises it.
+- **Settings window ported from the Mac** (replaced "open tools.json in Notepad"): same layout, dark, flat, dotted, dark title bar in the background colour. Opens from the wheel's gear or the tray (double-click or "Settings…"); the tray's own "Open at login" item moved into it.
+  - App list = the Start menu's All apps, minus uninstallers, help files and web links. Desktop apps are saved by `.exe` path, Store apps (and shell places like Control Panel) as `shell:AppsFolder\<app ID>`.
+  - Shortcut recorder polls held keys like the wheel (WPF doesn't reliably see Win) and taps the mask key so recording Win doesn't open Start.
+- **The Settings app list also includes apps pinned to the taskbar or on the desktop**, because an app whose Start menu shortcut is missing (Chrome on the test PC) isn't in All apps. **Start entries with arguments** (Chrome web apps, Git Bash, mmc consoles) **are saved by app ID**, not as the bare `.exe`, which opened the wrong thing; these may start another copy instead of reusing a window.
+- **Admin windows in front block the shortcut; left as a known limit** rather than running Tool Wheel as admin. Chosen by the user over an optional run-as-admin setting and a signed `uiAccess` build.
+- **First Windows release `windows-v0.1.0`: portable self-contained `.exe`**, unsigned, no installer. Shareable now that the wheel works on a real PC; an installer and signing can come later.
+- **Default Notepad, Calculator and Settings are their Store apps** (`shell:AppsFolder\…`) when installed. On Windows 11 the old `notepad.exe`/`calc.exe` only hand off to them, so their windows couldn't be matched.
+- **Icons via the shell's `IShellItemImageFactory`**, which covers files, folders and Store apps; cached per session.
+- **`--snapshot out.png` / `--snapshot-settings out.png`** render the wheel or Settings to a PNG, for checking visuals without the shortcut (like the Mac's `--snapshot`).
 
 ## Next
 
 **Windows**
-- Run it on a real PC; likely fixes: DPI/cursor maths across monitors, icon extraction.
-- Port the Settings window (app search, grip reordering, shortcut recorder, open mode).
-- Frosted backdrop (likely needs a WinUI/DWM approach), "open" dots for `.lnk` tools.
-- First release: tag `windows-v0.1.0`.
+- Finish testing on a real PC; likely fixes: DPI/cursor maths across monitors, icon extraction.
+- Frosted backdrop (likely needs a WinUI/DWM approach).
+- `.lnk` tools (hand-edited JSON only) always start a new copy and get no "open" dot; resolve the shortcut target to match windows.
+- Installer (Inno Setup or MSIX) for a Start menu entry and uninstaller; code signing to drop the SmartScreen warning.
 
 **macOS**
 - Release `mac-v0.4.0` with reordering, gliding icons and the centred Settings window.
@@ -97,8 +111,12 @@ Newest at the bottom. Each entry: what was decided, and why.
 - Shortcuts are modifier-only (no letter keys) on both platforms; letter keys would need permissions or a hook.
 - Mac downloads show a Gatekeeper warning until notarized; Windows shows SmartScreen until signed.
 - The Settings preview can't show the live blur (a grey disc stands in).
+- Windows: the shortcut doesn't work while an admin window is in front (Task Manager, which always runs as admin for admin accounts; admin terminals; installers). Windows hides key state from normal apps then, so the 60Hz poll sees nothing and the Start-menu mask key is blocked too. Hooks are blocked the same way. Fixes, if it's ever wanted: an optional run-as-admin mode (scheduled task at login, apps launched unelevated via Explorer), or `uiAccess` (needs a signed exe installed in Program Files).
+- Windows: apps open on another virtual desktop count as not open, so a new copy starts on the current one.
 
 ## Working notes
 
 - Check Mac visuals without the hotkey: `mac/.build/debug/ToolWheel --snapshot out.png` (skips the blur).
 - Re-render icons after changing the knob: `mac/scripts/make-icon.sh`.
+- Windows: `cd windows && dotnet build`, then run `bin/Debug/net8.0-windows/ToolWheel.exe` (quit from the tray icon before rebuilding). Config is `%APPDATA%\ToolWheel\tools.json`; delete it to get the defaults back.
+- Windows visuals without the shortcut: `bin/Debug/net8.0-windows/ToolWheel.exe --snapshot out.png` (or `--snapshot-settings`).

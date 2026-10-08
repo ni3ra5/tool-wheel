@@ -22,30 +22,34 @@ static class Look
     static readonly Color Gray = Color.FromRgb(0x99, 0x99, 0x99);
     public static readonly Brush AccentBrush = Frozen(new SolidColorBrush(Accent));
     public static readonly Brush GrayBrush = Frozen(new SolidColorBrush(Gray));
+    public static readonly FontFamily Text = new("Segoe UI Variable Text, Segoe UI");
+    public static readonly FontFamily Glyphs = new("Segoe Fluent Icons, Segoe MDL2 Assets");
 
     /// Top-lit plastic, mapped over the whole wheel so every slice shares one light.
     public static readonly Brush Plastic = Frozen(new LinearGradientBrush(
         Colors.White, Color.FromRgb(0xEE, 0xEE, 0xEE), new Point(0, 0), new Point(0, Size)) { MappingMode = BrushMappingMode.Absolute });
 
     /// Faint dot grid, like a speaker grille pressed into the plastic.
-    public static readonly Brush Dots = Frozen(new DrawingBrush(new GeometryDrawing(
-        new SolidColorBrush(Color.FromArgb(15, 0, 0, 0)), null, new EllipseGeometry(new Point(3.5, 3.5), 0.7, 0.7)))
+    public static readonly Brush Dots = DotGrid(Color.FromArgb(15, 0, 0, 0), 7);
+
+    public static Brush DotGrid(Color color, double step) => Frozen(new DrawingBrush(new GeometryDrawing(
+        new SolidColorBrush(color), null, new EllipseGeometry(new Point(step / 2, step / 2), 0.7, 0.7)))
     {
         TileMode = TileMode.Tile,
-        Viewport = new Rect(0, 0, 7, 7), ViewportUnits = BrushMappingMode.Absolute,
-        Viewbox = new Rect(0, 0, 7, 7), ViewboxUnits = BrushMappingMode.Absolute,
+        Viewport = new Rect(0, 0, step, step), ViewportUnits = BrushMappingMode.Absolute,
+        Viewbox = new Rect(0, 0, step, step), ViewboxUnits = BrushMappingMode.Absolute,
     });
 
-    static T Frozen<T>(T f) where T : Freezable { f.Freeze(); return f; }
+    public static T Frozen<T>(T f) where T : Freezable { f.Freeze(); return f; }
 
     /// Point `r` out from the wheel's centre at `angle` (radians, clockwise from 12 o'clock).
     public static Point At(double angle, double r) => new(Size / 2 + Math.Sin(angle) * r, Size / 2 - Math.Cos(angle) * r);
 
-    /// Slice under an offset from the centre (DIPs, y down), or null over the knob or outside the wheel.
-    public static int? Slice(double dx, double dy, int count)
+    /// Slice under an offset from the centre (DIPs, y down), or null over the knob or beyond `outer`.
+    public static int? Slice(double dx, double dy, int count, double outer = Outer)
     {
         double distance = Math.Sqrt(dx * dx + dy * dy);
-        if (count == 0 || distance <= Center || distance > Outer) return null;
+        if (count == 0 || distance <= Center || distance > outer) return null;
         double angle = Math.Atan2(dx, -dy);
         if (angle < 0) angle += 2 * Math.PI;
         return (int)Math.Round(angle / (2 * Math.PI / count)) % count;
@@ -72,46 +76,95 @@ static class Look
         geometry.Freeze();
         return geometry;
     }
+
+    /// Centres an element on a point of its canvas.
+    public static void Place(FrameworkElement element, Point at)
+    {
+        Canvas.SetLeft(element, at.X - element.Width / 2);
+        Canvas.SetTop(element, at.Y - element.Height / 2);
+    }
 }
 
-/// The floating wheel: tool slices round a knob whose pointer clicks round in 10° detents toward the cursor.
-sealed class WheelWindow : Window
+/// A position round the wheel, an angle plus a lift outward, that animates and calls `Place` as it changes.
+/// Lets icons and Settings' controls glide along the arc when tools are reordered.
+sealed class Polar : Animatable
 {
-    readonly Grid wheel = new() { Width = Look.Size, Height = Look.Size };
+    public static readonly DependencyProperty AngleProperty = DependencyProperty.Register(nameof(Angle), typeof(double), typeof(Polar), new(0.0, Moved));
+    public static readonly DependencyProperty LiftProperty = DependencyProperty.Register(nameof(Lift), typeof(double), typeof(Polar), new(0.0, Moved));
+    public double Angle => (double)GetValue(AngleProperty);
+    public double Lift => (double)GetValue(LiftProperty);
+    public Action<double, double>? Place;  // (angle, lift)
+
+    static void Moved(DependencyObject d, DependencyPropertyChangedEventArgs _) { var p = (Polar)d; p.Place?.Invoke(p.Angle, p.Lift); }
+    protected override Freezable CreateInstanceCore() => new Polar();
+
+    public void Jump(double angle)
+    {
+        BeginAnimation(AngleProperty, null);
+        SetValue(AngleProperty, angle);
+        Place?.Invoke(Angle, Lift);
+    }
+
+    /// Glides the short way round, with a little spring.
+    public void Glide(double angle)
+    {
+        double target = Angle + Math.IEEERemainder(angle - Angle, 2 * Math.PI);
+        BeginAnimation(AngleProperty, new DoubleAnimation(target, TimeSpan.FromMilliseconds(350)) { EasingFunction = new BackEase { Amplitude = 0.25, EasingMode = EasingMode.EaseOut } });
+    }
+
+    public void LiftTo(double lift) =>
+        BeginAnimation(LiftProperty, new DoubleAnimation(lift, TimeSpan.FromMilliseconds(160)) { EasingFunction = new BackEase { Amplitude = 0.4, EasingMode = EasingMode.EaseOut } });
+}
+
+/// The wheel itself: tool slices round a knob whose pointer clicks round in 10° detents toward the cursor.
+/// Settings shows it in edit mode: static, no backdrop, "Remove" in place of the gear.
+sealed class WheelView : Grid
+{
+    /// One tool's icon and "open" dot, which travel together when the wheel is reordered.
+    sealed class Face
+    {
+        public readonly Polar Polar = new();
+        public readonly FrameworkElement Icon;
+        public readonly Ellipse Dot = new() { Width = 3.5, Height = 3.5, Fill = new SolidColorBrush(Color.FromRgb(0xA3, 0xA3, 0xA3)) };
+
+        public Face(Tool tool)
+        {
+            Icon = tool.Expanded is { } path && Native.Icon(path, 128) is { } icon
+                ? new Image { Source = icon }
+                : new TextBlock { Text = "", FontFamily = Look.Glyphs, FontSize = 26, TextAlignment = TextAlignment.Center, Foreground = new SolidColorBrush(Color.FromRgb(0x47, 0x47, 0x47)) };
+            Icon.Width = Icon.Height = 44;
+            RenderOptions.SetBitmapScalingMode(Icon, BitmapScalingMode.HighQuality);
+            Polar.Place = (angle, lift) =>
+            {
+                Look.Place(Icon, Look.At(angle, Look.IconRadius + lift));
+                Look.Place(Dot, Look.At(angle, Look.RunningDot + lift));
+            };
+        }
+    }
+
+    readonly bool editing;
+    readonly Grid body;
     readonly Canvas slices = new() { Width = Look.Size, Height = Look.Size };
+    readonly Canvas faces = new() { Width = Look.Size, Height = Look.Size };
     readonly RotateTransform knobTurn = new(0, Look.Center, Look.Center);
     readonly ScaleTransform openScale = new(1, 1, Look.Size / 2, Look.Size / 2);
     readonly Border pointer;
     readonly TextBlock label, gear;
+    readonly Dictionary<string, Face> facesByTool = new(StringComparer.OrdinalIgnoreCase);
     List<Tool> tools = new();
+    List<Face> order = new();
     double knobAngle;  // radians, unwrapped so it always turns the short way round
 
-    public IntPtr Handle { get; private set; }
     public int? Hovered { get; private set; }
+    public int? TrashHovered { get; private set; }  // editing only
     public bool GearHovered { get; private set; }
     public Tool? HoveredTool => Hovered is int i ? tools[i] : null;
+    public IReadOnlyList<Tool> Tools => tools;
 
-    public WheelWindow()
+    public WheelView(bool editing = false)
     {
-        WindowStyle = WindowStyle.None;
-        AllowsTransparency = true;
-        Background = Brushes.Transparent;
-        Topmost = true;
-        ShowInTaskbar = false;
-        ShowActivated = false;
-        ResizeMode = ResizeMode.NoResize;
+        this.editing = editing;
         Width = Height = Look.Size;
-
-        // Stand-in for the Mac's frosted glass: a light disc just past the rim, its edge lit from above.
-        // ponytail: no live blur; WPF transparent windows can't host Windows' acrylic. Revisit with a WinUI backdrop.
-        var backdrop = new Ellipse
-        {
-            Width = (Look.Outer + Look.Gap) * 2,
-            Height = (Look.Outer + Look.Gap) * 2,
-            Fill = new SolidColorBrush(Color.FromRgb(0xDB, 0xDB, 0xDB)),
-            Stroke = new LinearGradientBrush(Color.FromArgb(242, 255, 255, 255), Color.FromArgb(13, 255, 255, 255), 90),
-            StrokeThickness = 1,
-        };
 
         // Knob: outer ring and slightly smaller face, top-lit, casting its shadow straight down.
         var knob = new Grid { Width = Look.Center * 2, Height = Look.Center * 2 };
@@ -157,7 +210,7 @@ sealed class WheelWindow : Window
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
             TextTrimming = TextTrimming.CharacterEllipsis,
-            FontFamily = new FontFamily("Segoe UI Variable Text, Segoe UI"),
+            FontFamily = Look.Text,
             FontSize = 12,
             FontWeight = FontWeights.SemiBold,
             Foreground = new SolidColorBrush(Color.FromRgb(0x4D, 0x4D, 0x4D)),
@@ -165,68 +218,90 @@ sealed class WheelWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 0, 8),
         };
-        gear = new TextBlock
-        {
-            Text = "",  // Settings glyph
-            FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
-            FontSize = 13,
-            Foreground = Look.GrayBrush,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, Look.GearOffset * 2, 0, 0),
-        };
+        gear = editing
+            ? new TextBlock { Text = "Remove", FontFamily = Look.Text, FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = Look.AccentBrush, Opacity = 0 }
+            : new TextBlock { Text = "", FontFamily = Look.Glyphs, FontSize = 13, Foreground = Look.GrayBrush };  // Settings glyph
+        gear.HorizontalAlignment = HorizontalAlignment.Center;
+        gear.VerticalAlignment = VerticalAlignment.Center;
+        gear.Margin = new Thickness(0, Look.GearOffset * 2, 0, 0);
 
-        var body = new Grid { Effect = new DropShadowEffect { Direction = 270, ShadowDepth = 5, BlurRadius = 14, Opacity = 0.16 } };
+        body = new Grid { Effect = new DropShadowEffect { Direction = 270, ShadowDepth = 5, BlurRadius = 14, Opacity = 0.16 } };
         body.Children.Add(slices);
+        body.Children.Add(faces);  // above a lifted slice
         body.Children.Add(knob);
-        wheel.Children.Add(backdrop);
-        wheel.Children.Add(body);
-        wheel.Children.Add(label);
-        wheel.Children.Add(gear);
-        wheel.RenderTransform = openScale;
-        Content = wheel;
-
-        SourceInitialized += (_, _) =>
+        if (!editing)
         {
-            Handle = new WindowInteropHelper(this).Handle;
-            Native.MakeNonActivating(Handle);
-        };
+            // Stand-in for the Mac's frosted glass: a light disc just past the rim, its edge lit from above.
+            // ponytail: no live blur; WPF transparent windows can't host Windows' acrylic. Revisit with a WinUI backdrop.
+            Children.Add(new Ellipse
+            {
+                Width = (Look.Outer + Look.Gap) * 2,
+                Height = (Look.Outer + Look.Gap) * 2,
+                Fill = new SolidColorBrush(Color.FromRgb(0xDB, 0xDB, 0xDB)),
+                Stroke = new LinearGradientBrush(Color.FromArgb(242, 255, 255, 255), Color.FromArgb(13, 255, 255, 255), 90),
+                StrokeThickness = 1,
+            });
+        }
+        Children.Add(body);
+        Children.Add(label);
+        Children.Add(gear);
+        RenderTransform = openScale;
     }
 
-    public void Load(List<Tool> tools)
+    /// Lays out `tools`. With `glide`, icons already on the wheel travel to their new places.
+    public void Load(List<Tool> tools, IReadOnlyList<bool>? running = null, bool glide = false)
     {
         this.tools = tools;
-        Hovered = null;
+        Hovered = TrashHovered = null;
         GearHovered = false;
+
         slices.Children.Clear();
         double step = 2 * Math.PI / Math.Max(tools.Count, 1);
         for (int i = 0; i < tools.Count; i++)
         {
-            double a = i * step;
-            var geometry = Look.Wedge(a - step / 2, a + step / 2);
+            var geometry = Look.Wedge(i * step - step / 2, i * step + step / 2);
             var slice = new Canvas { Width = Look.Size, Height = Look.Size, RenderTransform = new TranslateTransform() };
             slice.Children.Add(new Path { Data = geometry, Fill = Look.Plastic, Stroke = Look.Plastic, StrokeThickness = Look.Corner * 2, StrokeLineJoin = PenLineJoin.Round });
             slice.Children.Add(new Path { Data = geometry, Fill = Look.Dots });
-
-            var tool = tools[i];
-            FrameworkElement face = tool.Expanded is { } path && Native.Icon(path) is { } icon
-                ? new Image { Source = icon }
-                : new TextBlock { Text = "", FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 26, TextAlignment = TextAlignment.Center, Foreground = new SolidColorBrush(Color.FromRgb(0x47, 0x47, 0x47)) };
-            RenderOptions.SetBitmapScalingMode(face, BitmapScalingMode.HighQuality);
-            Place(slice, face, Look.At(a, Look.IconRadius), 44);
-            if (tool.IsRunning)
-                Place(slice, new Ellipse { Fill = new SolidColorBrush(Color.FromRgb(0xA3, 0xA3, 0xA3)) }, Look.At(a, Look.RunningDot), 3.5);
             slices.Children.Add(slice);
         }
+
+        var next = new List<Face>();
+        for (int i = 0; i < tools.Count; i++)
+        {
+            string key = tools[i].Expanded ?? tools[i].Name;
+            bool known = facesByTool.TryGetValue(key, out var face);
+            if (!known)
+            {
+                face = new Face(tools[i]);
+                facesByTool[key] = face;
+                faces.Children.Add(face.Icon);
+                faces.Children.Add(face.Dot);
+                if (glide) face.Icon.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200)));
+            }
+            if (glide && known) face!.Polar.Glide(i * step);
+            else face!.Polar.Jump(i * step);
+            face.Polar.LiftTo(0);
+            face.Dot.Visibility = running is not null && i < running.Count && running[i] ? Visibility.Visible : Visibility.Collapsed;
+            next.Add(face);
+        }
+        foreach (var gone in order.Except(next))
+        {
+            faces.Children.Remove(gone.Icon);
+            faces.Children.Remove(gone.Dot);
+            facesByTool.Remove(facesByTool.First(kv => kv.Value == gone).Key);
+        }
+        order = next;
         Restyle();
     }
 
-    static void Place(Canvas canvas, FrameworkElement element, Point center, double size)
+    /// Settings: which tool's grip and trash the cursor is on.
+    public void SetHover(int? hovered, int? trash)
     {
-        element.Width = element.Height = size;
-        Canvas.SetLeft(element, center.X - size / 2);
-        Canvas.SetTop(element, center.Y - size / 2);
-        canvas.Children.Add(element);
+        if (hovered == Hovered && trash == TrashHovered) return;
+        Hovered = hovered;
+        TrashHovered = trash;
+        Restyle();
     }
 
     /// dx/dy: cursor offset from the wheel's centre in DIPs (y down). True when the knob clicks over a detent.
@@ -250,6 +325,13 @@ sealed class WheelWindow : Window
         return true;
     }
 
+    /// Turns the knob to face slice `i`, the short way round (Settings, where there's no cursor to follow).
+    public void PointAt(int i)
+    {
+        knobAngle += Math.IEEERemainder(i * 2 * Math.PI / Math.Max(tools.Count, 1) - knobAngle, 2 * Math.PI);
+        knobTurn.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(knobAngle * 180 / Math.PI, TimeSpan.FromMilliseconds(250)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+    }
+
     void Restyle()
     {
         double step = 2 * Math.PI / Math.Max(tools.Count, 1);
@@ -257,13 +339,17 @@ sealed class WheelWindow : Window
         {
             var slice = (Canvas)slices.Children[i];
             bool on = Hovered == i;
-            Lift(slice, i * step, on ? 3 : 0);  // hovered slices nudge outward along their slice
+            double lift = on ? 3 : 0;  // hovered slices nudge outward along their slice
+            Lift(slice, i * step, lift);
+            order[i].Polar.LiftTo(lift);
             slice.Effect = on ? new DropShadowEffect { Direction = 270, ShadowDepth = 5, BlurRadius = 16, Opacity = 0.18 } : null;
             Panel.SetZIndex(slice, on ? 1 : 0);
         }
         pointer.BeginAnimation(OpacityProperty, new DoubleAnimation(Hovered is null ? 0 : 1, TimeSpan.FromMilliseconds(150)));
-        label.Text = GearHovered ? "Settings" : HoveredTool?.Name ?? "";
-        gear.Foreground = GearHovered ? Look.AccentBrush : Look.GrayBrush;
+        int? named = editing ? TrashHovered ?? Hovered : Hovered;
+        label.Text = GearHovered ? "Settings" : named is int n ? tools[n].Name : "";
+        if (editing) gear.Opacity = TrashHovered is null ? 0 : 1;
+        else gear.Foreground = GearHovered ? Look.AccentBrush : Look.GrayBrush;
     }
 
     static void Lift(Canvas slice, double angle, double distance)
@@ -277,7 +363,9 @@ sealed class WheelWindow : Window
     /// The hovered slice sinks a touch, like a key going down.
     public void Press()
     {
-        if (Hovered is int i) Lift((Canvas)slices.Children[i], i * 2 * Math.PI / tools.Count, -1);
+        if (Hovered is not int i) return;
+        Lift((Canvas)slices.Children[i], i * 2 * Math.PI / tools.Count, -1);
+        order[i].Polar.LiftTo(-1);
     }
 
     public void PlayOpen()
@@ -285,6 +373,32 @@ sealed class WheelWindow : Window
         var grow = new DoubleAnimation(0.88, 1, TimeSpan.FromMilliseconds(220)) { EasingFunction = new BackEase { Amplitude = 0.3, EasingMode = EasingMode.EaseOut } };
         openScale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
         openScale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
-        wheel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(150)));
+        BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(150)));
+    }
+}
+
+/// The floating, click-through-to-nothing panel that holds the wheel at the cursor.
+sealed class WheelWindow : Window
+{
+    public readonly WheelView View = new();
+    public IntPtr Handle { get; private set; }
+
+    public WheelWindow()
+    {
+        WindowStyle = WindowStyle.None;
+        AllowsTransparency = true;
+        Background = Brushes.Transparent;
+        Topmost = true;
+        ShowInTaskbar = false;
+        ShowActivated = false;
+        ResizeMode = ResizeMode.NoResize;
+        Width = Height = Look.Size;
+        Content = View;
+
+        SourceInitialized += (_, _) =>
+        {
+            Handle = new WindowInteropHelper(this).Handle;
+            Native.MakeNonActivating(Handle);
+        };
     }
 }
