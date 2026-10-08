@@ -1,0 +1,26 @@
+# Push a tag like mac-v0.4.0 to build "Tool Wheel.app" and attach the zip to that GitHub Release.
+name: Release (Mac)
+
+on:
+  push:
+    tags: ["mac-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: mac
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/build-app.sh "${GITHUB_REF_NAME#mac-v}"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "Tool Wheel for Mac ${GITHUB_REF_NAME#mac-}" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber

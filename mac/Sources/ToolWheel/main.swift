@@ -117,9 +117,11 @@ final class WheelModel: ObservableObject {
     /// The knob follows the cursor in detents of `detent` radians: clockwise from 12 o'clock, unwrapped so it
     /// always turns the short way round.
     @Published var knobAngle: Double = 0
-    /// Settings shows the wheel in edit mode: static, with a trash icon at each tool's outer edge.
+    /// Settings shows the wheel in edit mode: static, with its controls drawn round the outside.
     let editing: Bool
     @Published var trashHovered: Int?
+    /// Each tool's angle on the wheel, by tool id, unwrapped so a reorder glides the short way round.
+    @Published var angles: [String: Double] = [:]
 
     init(editing: Bool = false) { self.editing = editing }
 
@@ -128,11 +130,22 @@ final class WheelModel: ObservableObject {
         trashHovered = nil
         self.tools = tools
         icons = tools.map(\.icon)
+        var next: [String: Double] = [:]
+        for (i, tool) in tools.enumerated() {
+            let slot = Double(i) * 2 * .pi / Double(tools.count)
+            next[tool.id] = angles[tool.id].map { $0 + remainder(slot - $0, 2 * .pi) } ?? slot
+        }
+        angles = next
         // Compare resolved paths: e.g. /Applications/Safari.app is a symlink to the real bundle.
         let open = Set(NSWorkspace.shared.runningApplications.compactMap { $0.bundleURL?.resolvingSymlinksInPath().path })
         running = tools.map { tool in
             tool.expandedPath.map { open.contains(URL(fileURLWithPath: $0).resolvingSymlinksInPath().path) } ?? false
         }
+    }
+
+    /// Turns the knob to face slice `i`, the short way round.
+    func point(at i: Int) {
+        knobAngle += remainder(Double(i) * 2 * .pi / Double(max(tools.count, 1)) - knobAngle, 2 * .pi)
     }
 
     /// Steps the knob to the detent nearest the cursor; true when it clicked over to a new one.
@@ -157,8 +170,6 @@ let corner: CGFloat = 6          // rounding on wedge corners
 let dialRim: CGFloat = 5         // the dial's outer ring, which the light fills
 let gearOffset: CGFloat = 26     // settings icon sits this far below the wheel's centre
 let gearHitRadius: CGFloat = 14
-let trashRadius: CGFloat = outerRadius - 18  // edit mode: trash icon near each tool's outer edge
-let trashHitRadius: CGFloat = 12
 let runningDotRadius: CGFloat = 82  // "open" dot sits between a tool's icon and the knob
 let accent = Color(red: 1, green: 60.0 / 255, blue: 0)  // #FF3C00
 let plastic = LinearGradient(colors: [.white, Color(white: 0.935)], startPoint: .top, endPoint: .bottom)
@@ -221,6 +232,22 @@ struct Dial: View {
         .shadow(color: shade.opacity(0.35), radius: 2, y: 2)      // tight contact under the edge
         .shadow(color: shade.opacity(0.45), radius: 4, y: 4)      // dense, short shadow right under the knob
         .shadow(color: shade.opacity(0.38), radius: 12, y: 12)    // soft drop, straight down
+    }
+}
+
+/// Places a view `radius` out from the centre at `angle` (clockwise from 12 o'clock). Animating the angle moves it
+/// round the circle, not across it.
+struct Polar: GeometryEffect {
+    var angle: Double
+    var radius: CGFloat
+
+    var animatableData: AnimatablePair<Double, CGFloat> {
+        get { AnimatablePair(angle, radius) }
+        set { angle = newValue.first; radius = newValue.second }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        ProjectionTransform(CGAffineTransform(translationX: sin(angle) * radius, y: -cos(angle) * radius))
     }
 }
 
@@ -290,8 +317,7 @@ struct WheelView: View {
     func wedge(_ i: Int) -> some View {
         let shape = Wedge(start: Double(i) * step - step / 2, end: Double(i) * step + step / 2)
         let hovered = model.hovered == i, pressed = model.pressed == i
-        let mid = Double(i) * step, iconRadius = (centerRadius + outerRadius) / 2 + 4
-        let lift: CGFloat = pressed ? -1 : hovered ? 3 : 0  // nudged outward along its slice when hovered
+        let mid = Double(i) * step
         let piece = ZStack {
             shape.fill(plastic)
             shape.stroke(plastic, style: StrokeStyle(lineWidth: corner * 2, lineJoin: .round))
@@ -299,46 +325,53 @@ struct WheelView: View {
         return ZStack {
             piece
             DotTexture().mask(piece)
-            Image(nsImage: model.icons[i])
+        }
+        .brightness(pressed ? -0.04 : hovered ? 0.02 : 0)
+        .compositingGroup()
+        .shadow(color: .black.opacity(hovered && !pressed ? 0.18 : 0), radius: 8, y: 5)
+        .offset(x: sin(mid) * lift(i), y: -cos(mid) * lift(i))
+        .zIndex(hovered ? 1 : 0)
+    }
+
+    /// Hovered slices nudge outward along their slice; pressed ones sink.
+    func lift(_ i: Int) -> CGFloat { model.pressed == i ? -1 : model.hovered == i ? 3 : 0 }
+
+    /// The app sitting in slice `i`: its icon and "open" dot, placed by angle so a reorder glides it round.
+    func face(_ i: Int) -> some View {
+        let icon = model.icons[i]
+        let angle = model.angles[model.tools[i].id] ?? Double(i) * step
+        let iconRadius = (centerRadius + outerRadius) / 2 + 4
+        return ZStack {
+            Image(nsImage: icon)
                 .resizable()
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)
                 .foregroundStyle(Color(white: 0.28))
-                .frame(width: model.icons[i].isTemplate ? 26 : 44, height: model.icons[i].isTemplate ? 26 : 44)
+                .frame(width: icon.isTemplate ? 26 : 44, height: icon.isTemplate ? 26 : 44)
                 .overlay {
                     // Hairline round the app icon's tile. macOS icons fill ~80% of their canvas with ~22.5% corners.
-                    if !model.icons[i].isTemplate {
+                    if !icon.isTemplate {
                         RoundedRectangle(cornerRadius: 44 * 0.805 * 0.225, style: .continuous)
                             .stroke(.black.opacity(0.09), lineWidth: 0.5)
                             .frame(width: 44 * 0.805, height: 44 * 0.805)
                     }
                 }
-                .offset(x: sin(mid) * iconRadius, y: -cos(mid) * iconRadius)
+                .modifier(Polar(angle: angle, radius: iconRadius + lift(i)))
             if model.running.indices.contains(i) && model.running[i] {
                 Circle()
                     .fill(Color(white: 0.64))
                     .frame(width: 3.5, height: 3.5)
-                    .offset(x: sin(mid) * runningDotRadius, y: -cos(mid) * runningDotRadius)
-            }
-            if model.editing {
-                Image(systemName: "trash")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(model.trashHovered == i ? accent : Color(white: 0.6))
-                    .offset(x: sin(mid) * trashRadius, y: -cos(mid) * trashRadius)
+                    .modifier(Polar(angle: angle, radius: runningDotRadius + lift(i)))
             }
         }
-        .brightness(pressed ? -0.04 : hovered ? 0.02 : 0)
-        .compositingGroup()
-        .shadow(color: .black.opacity(hovered && !pressed ? 0.18 : 0), radius: 8, y: 5)
-        .offset(x: sin(mid) * lift, y: -cos(mid) * lift)
-        .zIndex(hovered ? 1 : 0)
     }
 
     var body: some View {
         ZStack {
             ForEach(model.tools.indices, id: \.self) { wedge($0) }
+            ForEach(Array(model.tools.enumerated()), id: \.element.id) { i, _ in face(i).zIndex(2) }  // above a lifted slice
             Dial(angle: model.knobAngle, lit: model.hovered != nil)
-            let named = model.editing ? model.trashHovered : model.hovered
+            let named = model.editing ? model.trashHovered ?? model.hovered : model.hovered  // editing: hovered = being dragged
             Text(model.gearHovered ? "Settings" : named.map { model.tools[$0].name } ?? "")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Color(white: 0.3))
@@ -502,7 +535,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Fresh view each time so it picks up the current tools.json.
         let window = settingsWindow ?? NSWindow(contentViewController: NSHostingController(rootView: EmptyView()))
         if !window.isVisible {
-            window.contentViewController = NSHostingController(rootView: SettingsView(store: SettingsStore()))
+            let content = NSHostingController(rootView: SettingsView(store: SettingsStore()))
+            window.contentViewController = content
             window.title = "Tool Wheel Settings"
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
@@ -511,8 +545,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.appearance = NSAppearance(named: .darkAqua)
             window.backgroundColor = NSColor(white: 0.095, alpha: 1)
             window.isReleasedWhenClosed = false
-            // Middle of the screen the cursor is on. (center() sits a third from the top, and needs the final size.)
-            window.layoutIfNeeded()
+            // Middle of the screen the cursor is on. (center() sits a third from the top.) The hosting view only
+            // resizes the window later, so size it to the SwiftUI content first or the maths uses a 1×0 window.
+            window.setContentSize(content.view.fittingSize)
             let mouse = NSEvent.mouseLocation
             if let screen = (NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main)?.visibleFrame {
                 window.setFrameOrigin(NSPoint(x: screen.midX - window.frame.width / 2, y: screen.midY - window.frame.height / 2))

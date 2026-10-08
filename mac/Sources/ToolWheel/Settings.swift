@@ -107,29 +107,120 @@ struct LibraryRow: View {
 }
 
 /// The wheel as it looks, static. Each tool has a trash icon at its outer edge; click it to remove the tool.
+/// Six-dot drag handle.
+struct Grip: View {
+    var body: some View {
+        VStack(spacing: 2.5) {
+            ForEach(0..<3, id: \.self) { _ in
+                HStack(spacing: 2.5) {
+                    Circle().frame(width: 3, height: 3)
+                    Circle().frame(width: 3, height: 3)
+                }
+            }
+        }
+    }
+}
+
+extension View {
+    /// Open hand over a drag handle, closed while dragging.
+    @ViewBuilder func grabCursor(active: Bool) -> some View {
+        if #available(macOS 15, *) {
+            pointerStyle(active ? .grabActive : .grabIdle)
+        } else {
+            onHover { $0 ? NSCursor.openHand.push() : NSCursor.pop() }
+        }
+    }
+}
+
+let editorSize = wheelSize + 84       // room for the controls ring outside the wheel
+let pillSize = CGSize(width: 58, height: 26)
+
+/// Pills are wider than tall, so at 3 and 9 o'clock they reach further toward the wheel; push those out
+/// so the clearance from the rim is the same all round.
+func controlsRadius(_ angle: Double) -> CGFloat {
+    outerRadius + 10 + pillSize.height / 2 + abs(sin(angle)) * (pillSize.width - pillSize.height) / 2
+}
+
+/// The wheel as it looks, static, with a control pill outside each tool's edge: trash to remove it,
+/// six-dot grip to drag it round to a new position. Tools glide to their new places.
 struct WheelEditor: View {
     @ObservedObject var store: SettingsStore
+    @State private var dragging: String?  // id of the tool being dragged
 
-    /// Trash icon under the point, in this view's coordinates (y down).
-    func trash(at p: CGPoint) -> Int? {
-        let tools = store.preview.tools
-        return tools.indices.first { i in
-            let a = Double(i) * 2 * .pi / Double(tools.count)
-            return hypot(p.x - (wheelSize / 2 + sin(a) * trashRadius), p.y - (wheelSize / 2 - cos(a) * trashRadius)) < trashHitRadius
+    /// Slice in the direction of the point (editor coordinates); anywhere outside the knob counts.
+    func slice(at p: CGPoint) -> Int? {
+        sliceIndex(dx: p.x - editorSize / 2, dy: editorSize / 2 - p.y, count: store.preview.tools.count, outer: .infinity)
+    }
+
+    func reorder(_ tool: Tool) -> some Gesture {
+        DragGesture(minimumDistance: 1, coordinateSpace: .named("editor"))
+            .onChanged { drag in
+                let preview = store.preview
+                guard let from = preview.tools.firstIndex(where: { $0.id == tool.id }) else { return }
+                if dragging == nil {
+                    dragging = tool.id
+                    preview.trashHovered = nil
+                    preview.hovered = from
+                }
+                guard let to = slice(at: drag.location), to != from else { return }
+                var tools = preview.tools
+                tools.move(fromOffsets: [from], toOffset: to > from ? to + 1 : to)
+                withAnimation(.spring(duration: 0.35, bounce: 0.15)) {
+                    preview.load(tools)
+                    preview.hovered = to
+                    preview.point(at: to)
+                }
+            }
+            .onEnded { _ in
+                if store.preview.tools != store.config.wheel { store.config.wheel = store.preview.tools }  // saves
+                dragging = nil
+                store.preview.hovered = nil
+            }
+    }
+
+    func controls(_ i: Int, _ tool: Tool) -> some View {
+        let preview = store.preview
+        let active = dragging == tool.id || (dragging == nil && preview.hovered == i)
+        return HStack(spacing: 9) {
+            Button {
+                withAnimation(.spring(duration: 0.35, bounce: 0.15)) { store.config.wheel.removeAll { $0.id == tool.id } }
+            } label: {
+                Image(systemName: "trash").font(.system(size: 11, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(preview.trashHovered == i ? accent : .white.opacity(0.45))
+            .onHover { inside in
+                guard dragging == nil else { return }
+                preview.trashHovered = inside ? i : nil
+            }
+            .help("Remove \(tool.name)")
+
+            Grip()
+                .foregroundStyle(.white.opacity(active ? 0.85 : 0.45))
+                .padding(4)
+                .contentShape(Rectangle())
+                .grabCursor(active: dragging == tool.id)
+                .onHover { inside in
+                    guard dragging == nil else { return }
+                    preview.hovered = inside ? i : nil
+                    if inside { preview.point(at: i) }
+                }
+                .gesture(reorder(tool))
         }
+        .frame(width: pillSize.width, height: pillSize.height)
+        .background(Capsule().fill(.white.opacity(active || preview.trashHovered == i ? 0.09 : 0.04)))
+        .modifier(Polar(angle: preview.angles[tool.id] ?? 0, radius: controlsRadius(preview.angles[tool.id] ?? 0)))
     }
 
     var body: some View {
         let preview = store.preview
-        WheelView(model: preview, backdrop: false)
-            .onContinuousHover { phase in
-                guard case .active(let p) = phase else { preview.trashHovered = nil; return }
-                let i = trash(at: p)
-                if i != preview.trashHovered { preview.trashHovered = i }
-            }
-            .onTapGesture {
-                if let i = preview.trashHovered { store.config.wheel.remove(at: i) }
-            }
+        ZStack {
+            WheelView(model: preview, backdrop: false)
+                .allowsHitTesting(false)  // the wheel itself is just a picture; the controls do the work
+            ForEach(Array(preview.tools.enumerated()), id: \.element.id) { i, tool in controls(i, tool) }
+        }
+        .frame(width: editorSize, height: editorSize)
+        .coordinateSpace(name: "editor")
     }
 }
 
@@ -233,6 +324,7 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             ZStack {
                 WheelEditor(store: store)
+                    .offset(y: -18)  // clear of the controls along the bottom
                 if store.config.wheel.isEmpty {
                     Text("Add tools from the list").font(.system(size: 11)).foregroundStyle(.white.opacity(0.35))
                         .offset(y: outerRadius + 24)
