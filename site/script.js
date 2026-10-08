@@ -19,9 +19,11 @@
   fetch(`https://api.github.com/repos/${REPO}/releases?per_page=50`)
     .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
     .then((releases) => {
-      // Newest release whose tag matches that has a matching file.
+      // Newest release whose tag matches that has a matching file. The API doesn't list releases newest first
+      // (the old plain v0.x Mac releases come back ahead of mac-v0.4.0), so sort by publish date.
+      const newest = [...releases].sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at));
       const pick = (tag, match) => {
-        for (const release of releases) {
+        for (const release of newest) {
           if (release.draft || !tag.test(release.tag_name)) continue;
           const asset = release.assets.find((a) => match.test(a.name));
           if (asset) return { release, asset };
