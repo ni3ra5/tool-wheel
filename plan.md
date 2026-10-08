@@ -8,8 +8,8 @@ Repo: <https://github.com/ni3ra5/tool-wheel> (public).
 
 | Platform | State | Latest release |
 | --- | --- | --- |
-| macOS | Working, used daily. Settings complete. | v0.3.0 (wheel, settings, icon). Reorder/glide and centred Settings are on `main`, not released yet. |
-| Windows | Preview, being tested on a real PC (Windows 11). Wheel, Settings window and focus handling work. | v0.1.1 (fixed knob click, quieter). Portable `.exe`, no installer. |
+| macOS | Working, used daily. Settings complete. | v0.4.0 (reordering, gliding icons, centred Settings, add/remove animation, smaller backdrop). |
+| Windows | Preview, being tested on a real PC (Windows 11). Wheel, Settings window and focus handling work. | v0.1.2 (add/remove animation, smaller backdrop). Portable `.exe`, no installer. |
 | Website | Landing page in `site/` with download buttons and a playable wheel demo. Not deployed yet. | – |
 
 ## Architecture
@@ -124,7 +124,6 @@ Newest at the bottom. Each entry: what was decided, and why.
 - Vercel project exists; get it serving `site/` (root `vercel.json`, or Root Directory `site` in the dashboard), then add the URL to the README.
 
 **macOS**
-- Release `mac-v0.4.0` with reordering, gliding icons and the centred Settings window.
 - Offer to move the app into Applications on first launch (avoids App Translocation).
 - Notarization, if an Apple Developer account is set up.
 - Switch login item to `SMAppService` once properly signed.
