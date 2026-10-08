@@ -385,6 +385,26 @@ struct WheelView: View {
     }
 }
 
+/// App icon: the knob in its socket on a plastic tile, pointer lit. Drawn at 1/5 size and rendered at 5×
+/// (`--icon`), so every stroke and shadow keeps the wheel's proportions. Tile follows Apple's 824/1024 grid.
+struct AppIcon: View {
+    var body: some View {
+        let tile = RoundedRectangle(cornerRadius: 37, style: .continuous)
+        ZStack {
+            tile.fill(plastic)
+            DotTexture()
+            Circle()  // socket the knob sits in, like the gap round it on the wheel
+                .fill(Color(white: 0.86))
+                .frame(width: centerRadius * 2 + 5, height: centerRadius * 2 + 5)
+            Dial(angle: .pi / 4, lit: true)
+        }
+        .frame(width: 164.8, height: 164.8)
+        .clipShape(tile)  // the knob's shadow stays on the tile
+        .shadow(color: .black.opacity(0.22), radius: 2, y: 2)
+        .frame(width: 204.8, height: 204.8)
+    }
+}
+
 // MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -550,6 +570,19 @@ if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLi
         let view = WheelView(model: model, backdrop: false).background(Color(white: 0.93))
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
+        if let cg = renderer.cgImage {
+            try? NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
+        }
+    }
+    exit(0)
+}
+
+// `ToolWheel --icon out.png` renders the 1024×1024 app icon (see scripts/make-icon.sh).
+if let i = CommandLine.arguments.firstIndex(of: "--icon"), i + 1 < CommandLine.arguments.count {
+    MainActor.assumeIsolated {
+        let renderer = ImageRenderer(content: AppIcon())
+        renderer.scale = 5
         if let cg = renderer.cgImage {
             try? NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])?
                 .write(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))

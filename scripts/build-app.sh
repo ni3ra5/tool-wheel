@@ -12,7 +12,8 @@ for arch in arm64 x86_64; do
   swift build -c release --triple "$arch-apple-macosx14.0" --scratch-path ".build/$arch"
 done
 
-rm -rf dist && mkdir -p "$APP/Contents/MacOS"
+rm -rf dist && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/"  # regenerate with scripts/make-icon.sh
 lipo -create .build/arm64/release/ToolWheel .build/x86_64/release/ToolWheel -output "$APP/Contents/MacOS/ToolWheel"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -25,6 +26,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>com.ni3ra5.toolwheel</string>
   <key>CFBundleExecutable</key><string>ToolWheel</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
