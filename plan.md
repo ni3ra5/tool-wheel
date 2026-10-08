@@ -9,7 +9,7 @@ Repo: <https://github.com/ni3ra5/tool-wheel> (public).
 | Platform | State | Latest release |
 | --- | --- | --- |
 | macOS | Working, used daily. Settings complete. | v0.3.0 (wheel, settings, icon). Reorder/glide and centred Settings are on `main`, not released yet. |
-| Windows | Preview, being tested on a real PC (Windows 11). Wheel, Settings window and focus handling work. | v0.1.0 (wheel, Settings, open-or-bring-forward). Portable `.exe`, no installer. |
+| Windows | Preview, being tested on a real PC (Windows 11). Wheel, Settings window and focus handling work. | v0.1.1 (fixed knob click, quieter). Portable `.exe`, no installer. |
 | Website | Landing page in `site/` with download buttons and a playable wheel demo. Not deployed yet. | – |
 
 ## Architecture
@@ -30,8 +30,8 @@ windows/    C# / WPF, .NET 8
   Native.cs          Win32: key state, cursor/monitors, mask key, other apps' windows, focus, shell icons
   Click.cs       detent sound
 assets/     icon.png, preview.png (README)
-site/       landing page for Vercel: plain index.html, style.css, script.js (+ copies of icon.png, preview.png)
-.github/workflows/  release-mac.yml (mac-v* tags), windows.yml (every windows/ change; releases on windows-v* tags)
+site/       landing page for Vercel: plain index.html, style.css, script.js (+ copies of icon.png, preview.png); vercel.json at the root points Vercel here
+.github/workflows/  release-mac.yml (mac-v* tags), mac.yml (compile check on every mac/ change), windows.yml (every windows/ change; releases on windows-v* tags)
 ```
 
 Shared on both platforms: the same geometry numbers, accent `#FF3C00`, the same `tools.json` shape (`wheel`, `shortcut`, `releaseToOpen`), and the same sound recipe.
@@ -92,6 +92,9 @@ Newest at the bottom. Each entry: what was decided, and why.
 - **First Windows release `windows-v0.1.0`: portable self-contained `.exe`**, unsigned, no installer. Shareable now that the wheel works on a real PC; an installer and signing can come later.
 - **Windows click volume 0.035, down from 0.15** (the user found it too loud, then still too loud at 0.07). The Mac stays at 0.15, a deliberate gap in the shared sound recipe.
 - **Windows click plays through one WASAPI stream (NAudio) held open while the wheel is up**, like the Mac's AVAudioEngine; replaced `SoundPlayer`. `SoundPlayer` opened a stream per click and an idle device ate the start of the 45 ms sound, so slow turns crackled and broke (confirmed with a loopback recording; now every click matches the intended sound). The stream reopens on every wheel open, so a changed default device is picked up. NAudio.Wasapi is the Windows app's first package dependency.
+- **Adding or removing a tool in Settings animates, on both Mac and Windows**: the slice opens in the gap (or closes where it was) while the other slices narrow or widen and glide round, and its icon and pill grow and fade in (or shrink and fade out, the icon quickly and under the neighbour sliding in). Slices are now keyed to their tool and glide on reorder too. Timings match: 350 ms spring for slices, 250 ms fade-in, 180 ms icon fade-out, 350 ms pill fade-out. Windows: one animated angle/span/lift (`Polar`) per tool. Mac: animatable `Slice` view plus `Opening`/`popping` transitions. The Mac side is compile-checked only (no Mac here); check the motion and smoothness on a Mac.
+- **The UI and animations are always the same on Mac and Windows** (user's rule, now in `CLAUDE.md`). Visual and motion changes go into both apps in the same change; only platform plumbing may differ.
+- **Mac compile check in GitHub Actions** (`mac.yml`, every push touching `mac/`), since Mac code is now also edited from the Windows machine.
 - **Default Notepad, Calculator and Settings are their Store apps** (`shell:AppsFolder\…`) when installed. On Windows 11 the old `notepad.exe`/`calc.exe` only hand off to them, so their windows couldn't be matched.
 - **Icons via the shell's `IShellItemImageFactory`**, which covers files, folders and Store apps; cached per session.
 - **`--snapshot out.png` / `--snapshot-settings out.png`** render the wheel or Settings to a PNG, for checking visuals without the shortcut (like the Mac's `--snapshot`).
@@ -106,6 +109,8 @@ Newest at the bottom. Each entry: what was decided, and why.
 - **No dot pattern on the demo panel**; it's plain `#181818`. The page background keeps its dots.
 - **No sound in the website demo** (replaced the opt-in "Sound on" toggle and the synthesised thock). Detents are silent; phones that support it get a 4 ms vibration per detent.
 - **Backdrop stops inside the wheel** (8 px short of the rim) instead of extending one gap past it. It still fills the gaps between slices but never shows outside the edge. Its lit border went with it (no rim left to light). Replaces the 2026-10-08 "rim one gap past the wheel" decision. Mac, Windows and the website demo.
+- **Every Mac or Windows release must show up on the landing page's download buttons.** The site already picks up the newest release from the GitHub API, so the rule is to keep release tags and zip names in the shape it matches (`mac-v*` + `.zip`, `windows-v*` + `*-win-x64.zip`), update `site/` in the same change when that shape or the download set changes, and check both buttons after publishing. Written into `CLAUDE.md` under Conventions.
+- **Root `vercel.json` sets the output directory to `site/`** (no install or build). The first Vercel deploy served the repo root and returned 404 because there's no `index.html` there; the file makes it work without relying on the dashboard's Root Directory setting.
 
 ## Next
 
@@ -116,7 +121,7 @@ Newest at the bottom. Each entry: what was decided, and why.
 - Installer (Inno Setup or MSIX) for a Start menu entry and uninstaller; code signing to drop the SmartScreen warning.
 
 **Website**
-- Deploy `site/` to Vercel (Root Directory `site`, framework "Other", no build command) and add the URL to the README.
+- Vercel project exists; get it serving `site/` (root `vercel.json`, or Root Directory `site` in the dashboard), then add the URL to the README.
 
 **macOS**
 - Release `mac-v0.4.0` with reordering, gliding icons and the centred Settings window.

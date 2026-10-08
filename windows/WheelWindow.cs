@@ -65,6 +65,7 @@ static class Look
     public static Geometry Wedge(double start, double end)
     {
         double inner = Center + KnobGap + Corner, outer = Outer - Corner, half = Gap / 2 + Corner;
+        if (end - start <= 2 * Math.Asin(half / inner)) return Geometry.Empty;  // opening or closing: too thin to draw
         var points = Arc(outer, start + Math.Asin(half / outer), end - Math.Asin(half / outer))
             .Concat(Arc(inner, end - Math.Asin(half / inner), start + Math.Asin(half / inner))).ToList();
         var geometry = new StreamGeometry();
@@ -83,33 +84,72 @@ static class Look
         Canvas.SetLeft(element, at.X - element.Width / 2);
         Canvas.SetTop(element, at.Y - element.Height / 2);
     }
+
+    public static readonly TimeSpan Spring = TimeSpan.FromMilliseconds(350);
+
+    /// Fades an element in where it stands, growing it from a little smaller unless `grow` is off.
+    public static void Appear(UIElement element, bool grow = true, double fadeMs = 250)
+    {
+        element.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(fadeMs)));
+        if (!grow) return;
+        var scale = new ScaleTransform();
+        element.RenderTransformOrigin = new Point(0.5, 0.5);
+        element.RenderTransform = scale;
+        var up = new DoubleAnimation(0.6, 1, Spring) { EasingFunction = new BackEase { Amplitude = 0.4, EasingMode = EasingMode.EaseOut } };
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, up);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, up);
+    }
+
+    /// Fades an element out (shrinking it unless `grow` is off), then calls `gone`. Ease-in keeps it solid at first;
+    /// ease-out clears it quickly, for something others are about to slide over.
+    public static void Vanish(UIElement element, Action gone, bool grow = true, EasingMode ease = EasingMode.EaseIn)
+    {
+        element.IsHitTestVisible = false;
+        var fade = new DoubleAnimation(0, ease == EasingMode.EaseIn ? Spring : TimeSpan.FromMilliseconds(180)) { EasingFunction = new CubicEase { EasingMode = ease } };
+        fade.Completed += (_, _) => gone();
+        element.BeginAnimation(UIElement.OpacityProperty, fade);
+        if (!grow) return;
+        var scale = new ScaleTransform();
+        element.RenderTransformOrigin = new Point(0.5, 0.5);
+        element.RenderTransform = scale;
+        var down = new DoubleAnimation(0.6, fade.Duration) { EasingFunction = fade.EasingFunction };  // shrinks as it fades, like the Mac
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, down);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, down);
+    }
 }
 
-/// A position round the wheel, an angle plus a lift outward, that animates and calls `Place` as it changes.
-/// Lets icons and Settings' controls glide along the arc when tools are reordered.
+/// A place on the wheel: an angle, a span (a slice's width) and a lift outward. Animates, and calls `Place` as it
+/// changes, so slices, icons and Settings' controls glide round, open and close when tools are added, removed
+/// or reordered.
 sealed class Polar : Animatable
 {
-    public static readonly DependencyProperty AngleProperty = DependencyProperty.Register(nameof(Angle), typeof(double), typeof(Polar), new(0.0, Moved));
-    public static readonly DependencyProperty LiftProperty = DependencyProperty.Register(nameof(Lift), typeof(double), typeof(Polar), new(0.0, Moved));
+    public static readonly DependencyProperty AngleProperty = Register(nameof(Angle));
+    public static readonly DependencyProperty SpanProperty = Register(nameof(Span));
+    public static readonly DependencyProperty LiftProperty = Register(nameof(Lift));
+    static DependencyProperty Register(string name) => DependencyProperty.Register(name, typeof(double), typeof(Polar), new(0.0, Moved));
     public double Angle => (double)GetValue(AngleProperty);
+    public double Span => (double)GetValue(SpanProperty);
     public double Lift => (double)GetValue(LiftProperty);
-    public Action<double, double>? Place;  // (angle, lift)
+    public Action? Place;
 
-    static void Moved(DependencyObject d, DependencyPropertyChangedEventArgs _) { var p = (Polar)d; p.Place?.Invoke(p.Angle, p.Lift); }
+    static void Moved(DependencyObject d, DependencyPropertyChangedEventArgs _) => ((Polar)d).Place?.Invoke();
     protected override Freezable CreateInstanceCore() => new Polar();
 
-    public void Jump(double angle)
+    public void Jump(double angle, double span = 0)
     {
         BeginAnimation(AngleProperty, null);
+        BeginAnimation(SpanProperty, null);
         SetValue(AngleProperty, angle);
-        Place?.Invoke(Angle, Lift);
+        SetValue(SpanProperty, span);
+        Place?.Invoke();
     }
 
     /// Glides the short way round, with a little spring.
-    public void Glide(double angle)
+    public void Glide(double angle, double span = 0)
     {
-        double target = Angle + Math.IEEERemainder(angle - Angle, 2 * Math.PI);
-        BeginAnimation(AngleProperty, new DoubleAnimation(target, TimeSpan.FromMilliseconds(350)) { EasingFunction = new BackEase { Amplitude = 0.25, EasingMode = EasingMode.EaseOut } });
+        var ease = new BackEase { Amplitude = 0.25, EasingMode = EasingMode.EaseOut };
+        BeginAnimation(AngleProperty, new DoubleAnimation(Angle + Math.IEEERemainder(angle - Angle, 2 * Math.PI), Look.Spring) { EasingFunction = ease });
+        BeginAnimation(SpanProperty, new DoubleAnimation(span, Look.Spring) { EasingFunction = ease });
     }
 
     public void LiftTo(double lift) =>
@@ -120,27 +160,50 @@ sealed class Polar : Animatable
 /// Settings shows it in edit mode: static, no backdrop, "Remove" in place of the gear.
 sealed class WheelView : Grid
 {
-    /// One tool's icon and "open" dot, which travel together when the wheel is reordered.
-    sealed class Face
+    /// One tool: its slice, icon and "open" dot, which move together.
+    sealed class Entry
     {
+        public readonly string Key;
         public readonly Polar Polar = new();
+        public readonly Canvas Slice = new() { Width = Look.Size, Height = Look.Size };
         public readonly FrameworkElement Icon;
         public readonly Ellipse Dot = new() { Width = 3.5, Height = 3.5, Fill = new SolidColorBrush(Color.FromRgb(0xA3, 0xA3, 0xA3)) };
+        readonly Path plastic = new() { Fill = Look.Plastic, Stroke = Look.Plastic, StrokeThickness = Look.Corner * 2, StrokeLineJoin = PenLineJoin.Round };
+        readonly Path dots = new() { Fill = Look.Dots };
+        readonly TranslateTransform lift = new();
+        double shapedAngle = double.NaN, shapedSpan = double.NaN;
 
-        public Face(Tool tool)
+        public Entry(Tool tool)
         {
+            Key = KeyOf(tool);
+            Slice.Children.Add(plastic);
+            Slice.Children.Add(dots);
+            Slice.RenderTransform = lift;
             Icon = tool.Expanded is { } path && Native.Icon(path, 128) is { } icon
                 ? new Image { Source = icon }
                 : new TextBlock { Text = "", FontFamily = Look.Glyphs, FontSize = 26, TextAlignment = TextAlignment.Center, Foreground = new SolidColorBrush(Color.FromRgb(0x47, 0x47, 0x47)) };
             Icon.Width = Icon.Height = 44;
             RenderOptions.SetBitmapScalingMode(Icon, BitmapScalingMode.HighQuality);
-            Polar.Place = (angle, lift) =>
+            Polar.Place = Place;
+        }
+
+        void Place()
+        {
+            double angle = Polar.Angle, span = Polar.Span, up = Polar.Lift;
+            if (angle != shapedAngle || span != shapedSpan)  // reshape only when it moves round, not when it lifts
             {
-                Look.Place(Icon, Look.At(angle, Look.IconRadius + lift));
-                Look.Place(Dot, Look.At(angle, Look.RunningDot + lift));
-            };
+                shapedAngle = angle;
+                shapedSpan = span;
+                plastic.Data = dots.Data = Look.Wedge(angle - span / 2, angle + span / 2);
+            }
+            lift.X = Math.Sin(angle) * up;  // hovered slices nudge outward along their slice
+            lift.Y = -Math.Cos(angle) * up;
+            Look.Place(Icon, Look.At(angle, Look.IconRadius + up));
+            Look.Place(Dot, Look.At(angle, Look.RunningDot + up));
         }
     }
+
+    public static string KeyOf(Tool tool) => tool.Expanded ?? tool.Name;
 
     readonly bool editing;
     readonly Grid body;
@@ -150,9 +213,9 @@ sealed class WheelView : Grid
     readonly ScaleTransform openScale = new(1, 1, Look.Size / 2, Look.Size / 2);
     readonly Border pointer;
     readonly TextBlock label, gear;
-    readonly Dictionary<string, Face> facesByTool = new(StringComparer.OrdinalIgnoreCase);
+    readonly Dictionary<string, Entry> entries = new(StringComparer.OrdinalIgnoreCase);
     List<Tool> tools = new();
-    List<Face> order = new();
+    List<Entry> order = new();
     double knobAngle;  // radians, unwrapped so it always turns the short way round
 
     public int? Hovered { get; private set; }
@@ -254,41 +317,49 @@ sealed class WheelView : Grid
         Hovered = TrashHovered = null;
         GearHovered = false;
 
-        slices.Children.Clear();
         double step = 2 * Math.PI / Math.Max(tools.Count, 1);
+        var next = new List<Entry>();
         for (int i = 0; i < tools.Count; i++)
         {
-            var geometry = Look.Wedge(i * step - step / 2, i * step + step / 2);
-            var slice = new Canvas { Width = Look.Size, Height = Look.Size, RenderTransform = new TranslateTransform() };
-            slice.Children.Add(new Path { Data = geometry, Fill = Look.Plastic, Stroke = Look.Plastic, StrokeThickness = Look.Corner * 2, StrokeLineJoin = PenLineJoin.Round });
-            slice.Children.Add(new Path { Data = geometry, Fill = Look.Dots });
-            slices.Children.Add(slice);
-        }
-
-        var next = new List<Face>();
-        for (int i = 0; i < tools.Count; i++)
-        {
-            string key = tools[i].Expanded ?? tools[i].Name;
-            bool known = facesByTool.TryGetValue(key, out var face);
+            bool known = entries.TryGetValue(KeyOf(tools[i]), out var entry);
             if (!known)
             {
-                face = new Face(tools[i]);
-                facesByTool[key] = face;
-                faces.Children.Add(face.Icon);
-                faces.Children.Add(face.Dot);
-                if (glide) face.Icon.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200)));
+                entry = new Entry(tools[i]);
+                entries[entry.Key] = entry;
+                slices.Children.Add(entry.Slice);
+                faces.Children.Add(entry.Icon);
+                faces.Children.Add(entry.Dot);
             }
-            if (glide && known) face!.Polar.Glide(i * step);
-            else face!.Polar.Jump(i * step);
-            face.Polar.LiftTo(0);
-            face.Dot.Visibility = running is not null && i < running.Count && running[i] ? Visibility.Visible : Visibility.Collapsed;
-            next.Add(face);
+            if (!glide) entry!.Polar.Jump(i * step, step);
+            else if (known) entry!.Polar.Glide(i * step, step);
+            else
+            {
+                // A new tool: its slice opens in the gap while the others make room, and its icon fades in.
+                entry!.Polar.Jump(i * step, 0);
+                entry.Polar.Glide(i * step, step);
+                Look.Appear(entry.Slice, grow: false, fadeMs: 60);  // its widening is the entrance; a slow fade reads as a grey wedge
+                Look.Appear(entry.Icon);
+                Look.Appear(entry.Dot);
+            }
+            entry.Dot.Visibility = running is not null && i < running.Count && running[i] ? Visibility.Visible : Visibility.Collapsed;
+            next.Add(entry);
         }
-        foreach (var gone in order.Except(next))
+        foreach (var gone in order.Except(next).ToList())
         {
-            faces.Children.Remove(gone.Icon);
-            faces.Children.Remove(gone.Dot);
-            facesByTool.Remove(facesByTool.First(kv => kv.Value == gone).Key);
+            entries.Remove(gone.Key);
+            void Drop()
+            {
+                slices.Children.Remove(gone.Slice);
+                faces.Children.Remove(gone.Icon);
+                faces.Children.Remove(gone.Dot);
+            }
+            if (!glide) { Drop(); continue; }
+            // A removed tool: its slice closes up where it was while the others slide together.
+            gone.Polar.Glide(gone.Polar.Angle, 0);
+            Look.Vanish(gone.Slice, Drop, grow: false);
+            Panel.SetZIndex(gone.Icon, -1);  // under the neighbour sliding into its place
+            Look.Vanish(gone.Icon, () => { }, ease: EasingMode.EaseOut);
+            Look.Vanish(gone.Dot, () => { }, ease: EasingMode.EaseOut);
         }
         order = next;
         Restyle();
@@ -333,16 +404,12 @@ sealed class WheelView : Grid
 
     void Restyle()
     {
-        double step = 2 * Math.PI / Math.Max(tools.Count, 1);
-        for (int i = 0; i < slices.Children.Count; i++)
+        for (int i = 0; i < order.Count; i++)
         {
-            var slice = (Canvas)slices.Children[i];
             bool on = Hovered == i;
-            double lift = on ? 3 : 0;  // hovered slices nudge outward along their slice
-            Lift(slice, i * step, lift);
-            order[i].Polar.LiftTo(lift);
-            slice.Effect = on ? new DropShadowEffect { Direction = 270, ShadowDepth = 5, BlurRadius = 16, Opacity = 0.18 } : null;
-            Panel.SetZIndex(slice, on ? 1 : 0);
+            order[i].Polar.LiftTo(on ? 3 : 0);
+            order[i].Slice.Effect = on ? new DropShadowEffect { Direction = 270, ShadowDepth = 5, BlurRadius = 16, Opacity = 0.18 } : null;
+            Panel.SetZIndex(order[i].Slice, on ? 1 : 0);
         }
         pointer.BeginAnimation(OpacityProperty, new DoubleAnimation(Hovered is null ? 0 : 1, TimeSpan.FromMilliseconds(150)));
         int? named = editing ? TrashHovered ?? Hovered : Hovered;
@@ -351,20 +418,10 @@ sealed class WheelView : Grid
         else gear.Foreground = GearHovered ? Look.AccentBrush : Look.GrayBrush;
     }
 
-    static void Lift(Canvas slice, double angle, double distance)
-    {
-        var move = (TranslateTransform)slice.RenderTransform;
-        var ease = new BackEase { Amplitude = 0.4, EasingMode = EasingMode.EaseOut };
-        move.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(Math.Sin(angle) * distance, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease });
-        move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-Math.Cos(angle) * distance, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease });
-    }
-
     /// The hovered slice sinks a touch, like a key going down.
     public void Press()
     {
-        if (Hovered is not int i) return;
-        Lift((Canvas)slices.Children[i], i * 2 * Math.PI / tools.Count, -1);
-        order[i].Polar.LiftTo(-1);
+        if (Hovered is int i) order[i].Polar.LiftTo(-1);
     }
 
     public void PlayOpen()

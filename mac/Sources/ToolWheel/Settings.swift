@@ -181,6 +181,7 @@ struct WheelEditor: View {
     func controls(_ i: Int, _ tool: Tool) -> some View {
         let preview = store.preview
         let active = dragging == tool.id || (dragging == nil && preview.hovered == i)
+        let angle = preview.angles[tool.id] ?? 0
         return HStack(spacing: 9) {
             Button {
                 withAnimation(.spring(duration: 0.35, bounce: 0.15)) { store.config.wheel.removeAll { $0.id == tool.id } }
@@ -209,7 +210,10 @@ struct WheelEditor: View {
         }
         .frame(width: pillSize.width, height: pillSize.height)
         .background(Capsule().fill(.white.opacity(active || preview.trashHovered == i ? 0.09 : 0.04)))
-        .modifier(Polar(angle: preview.angles[tool.id] ?? 0, radius: controlsRadius(preview.angles[tool.id] ?? 0)))
+        .modifier(Polar(angle: angle, radius: controlsRadius(angle)))
+        .transition(.popping(at: UnitPoint(x: 0.5 + sin(angle) * controlsRadius(angle) / pillSize.width,
+                                           y: 0.5 - cos(angle) * controlsRadius(angle) / pillSize.height),
+                             leaving: .easeIn(duration: 0.35)))
     }
 
     var body: some View {
@@ -315,7 +319,9 @@ struct SettingsView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 4)
             ForEach(tools) { tool in
-                LibraryRow(tool: tool, onWheel: store.isOnWheel(tool)) { store.toggle(tool) }
+                LibraryRow(tool: tool, onWheel: store.isOnWheel(tool)) {
+                    withAnimation(.spring(duration: 0.35, bounce: 0.15)) { store.toggle(tool) }  // slices make room or close up
+                }
             }
         }
     }

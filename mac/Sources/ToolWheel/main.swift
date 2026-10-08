@@ -190,6 +190,7 @@ struct Wedge: Shape {
     func path(in rect: CGRect) -> Path {
         // Geometry is shrunk by `corner`; the same-width round-joined stroke in `body` grows it back with rounded corners.
         let inner = centerRadius + knobGap + corner, outer = outerRadius - corner, half = gap / 2 + corner
+        guard end - start > 2 * asin(half / inner) else { return Path() }  // opening or closing: too thin to draw
         let c = CGPoint(x: rect.midX, y: rect.midY)
         var p = Path()
         p.addLines(arcPoints(c, outer, start + asin(half / outer), end - asin(half / outer))
@@ -197,6 +198,75 @@ struct Wedge: Shape {
         p.closeSubpath()
         return p
     }
+}
+
+/// One slice of plastic between `start` and `end`. Animatable, so slices glide and resize when tools are added,
+/// removed or reordered; it also reads how far it's opened (see `Opening`), so a new slice opens in its gap and
+/// a removed one closes where it was.
+struct Slice: View, Animatable {
+    var start: Double, end: Double
+    @Environment(\.sliceOpening) private var opening
+
+    var animatableData: AnimatablePair<Double, Double> {
+        get { AnimatablePair(start, end) }
+        set { start = newValue.first; end = newValue.second }
+    }
+
+    var body: some View {
+        let mid = (start + end) / 2, half = (end - start) / 2 * opening
+        let shape = Wedge(start: mid - half, end: mid + half)
+        let piece = ZStack {
+            shape.fill(plastic)
+            shape.stroke(plastic, style: StrokeStyle(lineWidth: corner * 2, lineJoin: .round))
+        }
+        ZStack {
+            piece
+            DotTexture().mask(piece)
+        }
+    }
+}
+
+private struct SliceOpeningKey: EnvironmentKey { static let defaultValue = 1.0 }
+extension EnvironmentValues {
+    var sliceOpening: Double {
+        get { self[SliceOpeningKey.self] }
+        set { self[SliceOpeningKey.self] = newValue }
+    }
+}
+
+/// Transition that opens a slice from nothing (or closes it), by handing `Slice` its opening amount each frame.
+struct Opening: ViewModifier, Animatable {
+    var amount: Double
+    var animatableData: Double {
+        get { amount }
+        set { amount = newValue }
+    }
+
+    func body(content: Content) -> some View { content.environment(\.sliceOpening, amount) }
+}
+
+extension AnyTransition {
+    /// A slice opening in its gap; closing where it was, fading as it goes. Same timings as Windows.
+    static var slice: AnyTransition {
+        let open = AnyTransition.modifier(active: Opening(amount: 0), identity: Opening(amount: 1))
+        return .asymmetric(insertion: open.combined(with: .opacity.animation(.linear(duration: 0.06))),
+                           removal: open.combined(with: .opacity.animation(.easeIn(duration: 0.35))))
+    }
+
+    /// Icons and pills: grow and fade in around where they sit (`anchor`), not round the wheel's centre; shrink and
+    /// fade out with `leaving`. Same timings as Windows.
+    static func popping(at anchor: UnitPoint, leaving: Animation) -> AnyTransition {
+        let grow = AnyTransition.scale(scale: 0.6, anchor: anchor)
+        return .asymmetric(insertion: grow.animation(.spring(duration: 0.35, bounce: 0.3))
+                                .combined(with: .opacity.animation(.linear(duration: 0.25))),
+                           removal: grow.combined(with: .opacity).animation(leaving))
+    }
+}
+
+/// Puts a leaving icon under the one sliding into its place.
+struct ZLayer: ViewModifier {
+    let z: Double
+    func body(content: Content) -> some View { content.zIndex(z) }
 }
 
 /// The centre knob: a machined white dial, an outer ring around a slightly smaller face.
@@ -315,22 +385,15 @@ struct WheelView: View {
     var step: Double { 2 * .pi / Double(max(model.tools.count, 1)) }
 
     func wedge(_ i: Int) -> some View {
-        let shape = Wedge(start: Double(i) * step - step / 2, end: Double(i) * step + step / 2)
         let hovered = model.hovered == i, pressed = model.pressed == i
-        let mid = Double(i) * step
-        let piece = ZStack {
-            shape.fill(plastic)
-            shape.stroke(plastic, style: StrokeStyle(lineWidth: corner * 2, lineJoin: .round))
-        }
-        return ZStack {
-            piece
-            DotTexture().mask(piece)
-        }
+        let mid = model.angles[model.tools[i].id] ?? Double(i) * step
+        return Slice(start: mid - step / 2, end: mid + step / 2)
         .brightness(pressed ? -0.04 : hovered ? 0.02 : 0)
         .compositingGroup()
         .shadow(color: .black.opacity(hovered && !pressed ? 0.18 : 0), radius: 8, y: 5)
         .offset(x: sin(mid) * lift(i), y: -cos(mid) * lift(i))
         .zIndex(hovered ? 1 : 0)
+        .transition(.slice)
     }
 
     /// Hovered slices nudge outward along their slice; pressed ones sink.
@@ -364,12 +427,17 @@ struct WheelView: View {
                     .modifier(Polar(angle: angle, radius: runningDotRadius + lift(i)))
             }
         }
+        .frame(width: wheelSize, height: wheelSize)
+        .zIndex(2)  // above a lifted slice
+        .transition(.popping(at: UnitPoint(x: 0.5 + sin(angle) * iconRadius / wheelSize, y: 0.5 - cos(angle) * iconRadius / wheelSize),
+                             leaving: .easeOut(duration: 0.18))  // gone before the neighbour slides over it
+            .combined(with: .asymmetric(insertion: .identity, removal: .modifier(active: ZLayer(z: 1.5), identity: ZLayer(z: 2)))))
     }
 
     var body: some View {
         ZStack {
-            ForEach(model.tools.indices, id: \.self) { wedge($0) }
-            ForEach(Array(model.tools.enumerated()), id: \.element.id) { i, _ in face(i).zIndex(2) }  // above a lifted slice
+            ForEach(Array(model.tools.enumerated()), id: \.element.id) { i, _ in wedge(i) }
+            ForEach(Array(model.tools.enumerated()), id: \.element.id) { i, _ in face(i) }
             Dial(angle: model.knobAngle, lit: model.hovered != nil)
             let named = model.editing ? model.trashHovered ?? model.hovered : model.hovered  // editing: hovered = being dragged
             Text(model.gearHovered ? "Settings" : named.map { model.tools[$0].name } ?? "")

@@ -1,0 +1,19 @@
+# Compile-checks the Mac app on every change under mac/, so Mac code edited from the Windows machine (which
+# can't build Swift) is checked before release. Releases are built by release-mac.yml on mac-v* tags.
+name: Mac
+
+on:
+  push:
+    branches: [main]
+    paths: ["mac/**", ".github/workflows/mac.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: mac
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift build

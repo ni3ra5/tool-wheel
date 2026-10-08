@@ -189,7 +189,7 @@ sealed class SettingsWindow : Window
                 Children = { Trash, new Border { Width = 9 }, Handle },
             };
             Trash.ToolTip = $"Remove {tool.Name}";
-            Polar.Place = (angle, _) => Look.Place(this, new Point(EditorSize / 2 + Math.Sin(angle) * Radius(angle), EditorSize / 2 - Math.Cos(angle) * Radius(angle)));
+            Polar.Place = () => Look.Place(this, new Point(EditorSize / 2 + Math.Sin(Polar.Angle) * Radius(Polar.Angle), EditorSize / 2 - Math.Cos(Polar.Angle) * Radius(Polar.Angle)));
         }
 
         /// Pills are wider than tall, so at 3 and 9 o'clock they reach further toward the wheel; push those out
@@ -198,7 +198,7 @@ sealed class SettingsWindow : Window
     }
 
     int IndexOf(Tool tool) => config.Wheel.FindIndex(t => t.Same(tool));
-    static string KeyOf(Tool tool) => tool.Expanded ?? tool.Name;
+    static string KeyOf(Tool tool) => WheelView.KeyOf(tool);
 
     void LoadWheel(bool glide)
     {
@@ -209,17 +209,24 @@ sealed class SettingsWindow : Window
         {
             var tool = config.Wheel[i];
             keep.Add(KeyOf(tool));
-            if (pillsByTool.TryGetValue(KeyOf(tool), out var pill) && glide) pill.Polar.Glide(i * step);
+            if (pillsByTool.TryGetValue(KeyOf(tool), out var pill))
+            {
+                if (glide) pill.Polar.Glide(i * step);
+                else pill.Polar.Jump(i * step);
+            }
             else
             {
-                pill ??= AddPill(tool);
+                pill = AddPill(tool);
                 pill.Polar.Jump(i * step);
+                if (glide) Look.Appear(pill);
             }
         }
         foreach (var gone in pillsByTool.Keys.Where(k => !keep.Contains(k)).ToList())
         {
-            pills.Children.Remove(pillsByTool[gone]);
+            var pill = pillsByTool[gone];
             pillsByTool.Remove(gone);
+            if (glide) Look.Vanish(pill, () => pills.Children.Remove(pill));
+            else pills.Children.Remove(pill);
         }
         emptyHint.Visibility = config.Wheel.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         RestylePills();
