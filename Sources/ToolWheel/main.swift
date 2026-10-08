@@ -33,6 +33,7 @@ let configURL = FileManager.default.homeDirectoryForCurrentUser
 struct Config: Codable {
     var wheel: [Tool]
     var shortcut: UInt?  // modifier flags to hold; nil means the default
+    var releaseToOpen: Bool?  // true: letting go of the shortcut opens the hovered tool; nil/false: click to open
 
     var trigger: NSEvent.ModifierFlags { shortcut.map { NSEvent.ModifierFlags(rawValue: $0) } ?? Shortcut.standard }
 }
@@ -43,6 +44,7 @@ enum Shortcut {
     static let standard: NSEvent.ModifierFlags = [.control, .option, .command]
     static var current = standard
     static var recording = false  // Settings is capturing a new shortcut; don't open the wheel meanwhile
+    static var releaseToOpen = false
 
     static func symbols(_ flags: NSEvent.ModifierFlags) -> String {
         [(NSEvent.ModifierFlags.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")]
@@ -394,7 +396,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ note: Notification) {
         let firstRun = !FileManager.default.fileExists(atPath: configURL.path)
-        Shortcut.current = loadConfig().trigger  // creates tools.json on first run
+        let config = loadConfig()  // creates tools.json on first run
+        Shortcut.current = config.trigger
+        Shortcut.releaseToOpen = config.releaseToOpen ?? false
         // No visible menu bar for an accessory app, but text fields still need these shortcuts.
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -455,7 +459,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !held { waitForRelease = false }
 
         if held && !panel.isVisible && !waitForRelease { show() }
-        else if !held && panel.isVisible { hide() }
+        else if !held && panel.isVisible {
+            if Shortcut.releaseToOpen {
+                if let i = model.hovered { model.tools[i].launch() }
+                else if model.gearHovered { openSettings() }
+            }
+            hide()
+        }
 
         if panel.isVisible {
             let mouse = NSEvent.mouseLocation, f = panel.frame

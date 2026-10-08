@@ -31,6 +31,7 @@ Open the wheel and click the gear in the centre. From there you can:
 
 - add apps by searching your installed apps, and remove one with the trash icon on its slice
 - change the shortcut (any two or more of ⌃ ⌥ ⇧ ⌘), or restore the default
+- choose how apps open: click them, or hover and release the shortcut
 - turn on launching at login
 
 Everything is saved to `~/.config/toolwheel/tools.json`:

@@ -8,6 +8,7 @@ final class SettingsStore: ObservableObject {
             saveConfig(config)
             preview.load(config.wheel)
             Shortcut.current = config.trigger
+            Shortcut.releaseToOpen = config.releaseToOpen ?? false
         }
     }
     /// The wheel shown on the left, in edit mode.
@@ -179,6 +180,13 @@ struct ShortcutField: View {
             Text(hint ?? (recording ? "Press keys" : "Shortcut"))
                 .font(.system(size: 12))
                 .foregroundStyle(hint == nil ? .white.opacity(0.6) : accent)
+            Button { store.config.shortcut = nil } label: {
+                Image(systemName: "arrow.counterclockwise").font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white.opacity(isDefault ? 0.2 : 0.55))
+            .disabled(isDefault)
+            .help("Restore \(Shortcut.symbols(Shortcut.standard))")
             Button { recording ? stop() : start() } label: {
                 Text(recording ? (held.isEmpty ? "…" : Shortcut.symbols(held)) : Shortcut.symbols(store.config.trigger))
                     .font(.system(size: 13, weight: .medium))
@@ -191,13 +199,6 @@ struct ShortcutField: View {
             }
             .buttonStyle(.plain)
             .help("Click, then hold the keys you want")
-            Button { store.config.shortcut = nil } label: {
-                Image(systemName: "arrow.counterclockwise").font(.system(size: 11, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white.opacity(isDefault ? 0.2 : 0.55))
-            .disabled(isDefault)
-            .help("Restore \(Shortcut.symbols(Shortcut.standard))")
         }
         .onDisappear { stop() }
     }
@@ -254,7 +255,27 @@ struct SettingsView: View {
                 .padding(20)
             }
             .overlay(alignment: .bottomTrailing) {
-                ShortcutField(store: store).padding(20)
+                VStack(alignment: .trailing, spacing: 12) {
+                    ShortcutField(store: store)
+                    HStack(spacing: 8) {
+                        Text("Open apps by")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.6))
+                        Picker("Open apps by", selection: Binding(
+                            get: { store.config.releaseToOpen ?? false },
+                            set: { store.config.releaseToOpen = $0 }
+                        )) {
+                            Text("Click").tag(false)
+                            Text("Release").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .controlSize(.small)
+                        .fixedSize()
+                        .help("Release: hover a tool and let go of the shortcut to open it")
+                    }
+                }
+                .padding(20)
             }
 
             Rectangle().fill(.white.opacity(0.06)).frame(width: 1)
@@ -284,6 +305,7 @@ struct SettingsView: View {
                 }
                 .scrollIndicators(.never)
                 .padding(.horizontal, -10)  // rows carry their own inset
+
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 20)
