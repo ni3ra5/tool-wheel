@@ -8,8 +8,8 @@ Repo: <https://github.com/ni3ra5/tool-wheel> (public).
 
 | Platform | State | Latest release |
 | --- | --- | --- |
-| macOS | Working, used daily. Settings complete. | v0.4.0 (reordering, gliding icons, centred Settings, add/remove animation, smaller backdrop). |
-| Windows | Preview, being tested on a real PC (Windows 11). Wheel, Settings window and focus handling work. | v0.1.3 (slot colours, hold-to-delete, open at login via a Startup shortcut). Portable `.exe`, no installer. |
+| macOS | Working, used daily. Settings complete. | v0.5.0 (side-button shortcut, on/off shortcut, in-app updates, slot colours, hold-to-delete). Built by CI; the new features haven't been tried on a Mac yet. |
+| Windows | Preview, being tested on a real PC (Windows 11). Wheel, Settings window and focus handling work. | v0.2.0 (side-button shortcut, on/off shortcut, in-app updates, open-dot fix). Portable `.exe`, no installer. |
 | Website | Landing page in `site/` with download buttons and a playable wheel demo. Not deployed yet. | – |
 
 ## Architecture
@@ -150,7 +150,9 @@ Newest at the bottom. Each entry: what was decided, and why.
   - Check: 5 s after launch, unless `"checkForUpdates": false`; asks the GitHub API for the newest non-draft release tagged `windows-v*` (with a `*-win-x64.zip`, or `-win-arm64.zip` on ARM) or `mac-v*` (with a `.zip`), the same lookup as the site's buttons. Development builds (version 0.0.0; the Mac's `build-app.sh` now defaults to 0.0.0 instead of 0.1.0) never check.
   - Prompt: a dark window like Settings, 420 wide: "Tool Wheel 0.1.5 is available", "You have 0.1.4. Updating takes a few seconds and restarts Tool Wheel.", the release notes cleaned to plain lines (box up to 180 px, scrolls), then **Skip this version** (saved as `"skipVersion"`, not asked again at launch) on the left and **Later** / **Update now** (accent) on the right. Failure shows "Couldn't update: …" in accent with **Open download page** / **Close**.
   - Install: downloads the zip and the release's `SHA256SUMS` (now published by both release workflows) and refuses on a mismatch or when the release has no checksums (every release before this). Windows renames the running `ToolWheel.exe` to `.old` (deleted at next launch), puts the new one in its place and starts it with `--updated`, which waits up to 10 s for the old copy to quit instead of exiting as a second instance; the Startup shortcut keeps working. Mac unpacks with `ditto`, swaps the bundle with `replaceItemAt` and has it reopened a second after quitting.
+  - Tested on Windows end to end: a local build labelled 0.1.9 found the real `windows-v0.2.0`, downloaded and verified it (~8 s for 70 MB), swapped itself and came back as 0.2.0 with the `.old` copy cleaned up.
   - Settings: a footer under the app list with the version (or "Development build") and **Check now** on the right (which shows a skipped version too; the result replaces the version for 4 s), then a **Check for updates at launch** switch. Windows' tray menu also has **Check for updates**.
+- **Releases `windows-v0.2.0` and `mac-v0.5.0`**, minor bumps rather than patches for the new side-button and on/off shortcuts and in-app updates. The first releases with `SHA256SUMS`, so the first that later versions can update from.
 
 ## Next
 
@@ -174,7 +176,7 @@ Newest at the bottom. Each entry: what was decided, and why.
 - Shortcuts are modifier keys, optionally with mouse side button 4 or 5 (no letter keys, no other mouse buttons) on both platforms; letter keys would need permissions or a hook.
 - Mac: the side-button shortcut's Accessibility permission belongs to the app's ad-hoc signature, so a new version may need it granted again (remove and re-add Tool Wheel under Privacy & Security → Accessibility). Mac side-button code is compile-checked only; not yet tried on a Mac.
 - Windows: the side-button hook can't see or block clicks on admin windows (same limit as the keys).
-- Updates: only releases from the updater's version on carry `SHA256SUMS`, so anyone on Windows v0.1.3 / Mac v0.4.0 or older updates by hand once. Installing needs write access to the app's folder (a Mac standard user can't write /Applications); otherwise it fails with "Open download page". Downloads aren't code-signed, so an update is exactly as trustworthy as a manual download. "Skip this version" can be lost if Settings is open at the time (Settings saves its own copy of tools.json). The actual swap and restart is untested until two releases with checksums exist; the Mac updater hasn't run at all.
+- Updates: only releases from the updater's version on carry `SHA256SUMS`, so anyone on Windows v0.1.3 / Mac v0.4.0 or older updates by hand once. Installing needs write access to the app's folder (a Mac standard user can't write /Applications); otherwise it fails with "Open download page". Downloads aren't code-signed, so an update is exactly as trustworthy as a manual download. "Skip this version" can be lost if Settings is open at the time (Settings saves its own copy of tools.json). The Mac updater hasn't run on a Mac yet.
 - Mac: the on/off shortcut can't be checked against other apps' hotkeys (pressing one that's taken does nothing while recording, with no message), and its code (Carbon hotkey, key names, badge) is compile-checked only; not yet tried on a Mac.
 - Mac downloads show a Gatekeeper warning until notarized; Windows shows SmartScreen until signed.
 - The Settings preview can't show the live blur (a grey disc stands in).
