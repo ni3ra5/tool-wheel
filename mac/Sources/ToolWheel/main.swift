@@ -831,7 +831,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func turnOnOff() {
+    @MainActor func turnOnOff() {
         OnOff.on.toggle()
         if !OnOff.on && panel.isVisible {
             hide()  // no release-to-open: turning it off shouldn't open anything
