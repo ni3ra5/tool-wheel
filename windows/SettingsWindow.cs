@@ -57,7 +57,7 @@ sealed class SettingsWindow : Window
         Background = new SolidColorBrush(Surface);
 
         // ---- Left: the wheel, its controls, and the switches along the bottom ----
-        var editor = new Grid { Width = EditorSize, Height = EditorSize, Margin = new Thickness(0, -36, 0, 0) };  // clear of the bottom row
+        var editor = new Grid { Width = EditorSize, Height = EditorSize, Margin = new Thickness(0, -76, 0, 0) };  // clear of the controls along the bottom
         preview.IsHitTestVisible = false;  // the wheel is just a picture; the pills do the work
         editor.Children.Add(preview);
         editor.Children.Add(pills);
@@ -72,7 +72,7 @@ sealed class SettingsWindow : Window
         var left = new Grid { Width = 529, Height = 580 };
         left.Children.Add(new Grid { Children = { editor }, VerticalAlignment = VerticalAlignment.Center });
         left.Children.Add(Corner(LoginSwitch(), HorizontalAlignment.Left));
-        left.Children.Add(Corner(new StackPanel { Children = { ShortcutField(), OpenMode() } }, HorizontalAlignment.Right));
+        left.Children.Add(Corner(new StackPanel { Children = { ShortcutField(), ToggleField(), OpenMode() } }, HorizontalAlignment.Right));
 
         // ---- Right: search the installed apps; click one to add or remove it ----
         search = new TextBox
@@ -133,8 +133,12 @@ sealed class SettingsWindow : Window
         PreviewKeyDown += (_, e) =>
         {
             if (!Recording) return;
-            if (e.Key == Key.Escape) StopRecording();
             e.Handled = true;  // don't let keys leak into the search field
+            var key = e.Key == Key.System ? e.SystemKey : e.Key;  // Alt held: WPF reports the key as System
+            if (key == Key.Escape) StopRecording();
+            else if (recordingToggle && KeyInterop.VirtualKeyFromKey(key) is int vk and not (0 or 0xE8)  // 0xE8: the mask key
+                     && key is not (Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin))
+                RecordToggle(vk, Native.HeldMods());  // a quick tap can slip between polls; the poll below catches the rest
         };
         Deactivated += (_, _) => StopRecording();
         Closed += (_, _) => StopRecording();
@@ -546,10 +550,12 @@ sealed class SettingsWindow : Window
         };
     }
 
-    // Shortcut recorder: click the keys, then press and release a new combination of two or more modifier keys.
-    // Esc, a second click or leaving the window cancels. The arrow restores the default.
+    // Shortcut recorder: click the keys, then press and release a new combination of two or more modifier keys, or a
+    // mouse side button on its own or with keys. Esc, a second click or leaving the window cancels. The arrow restores
+    // the default.
     DispatcherTimer? recorder;
     Mods held;
+    int? heldButton;
     Action? showShortcut;
 
     FrameworkElement ShortcutField()
@@ -557,52 +563,62 @@ sealed class SettingsWindow : Window
         var caption = new TextBlock { FontFamily = Look.Text, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
         var restore = new TextBlock { Text = "", FontFamily = Look.Glyphs, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 8, 0), Background = Brushes.Transparent, ToolTip = $"Restore {Keys.Describe(Config.DefaultTrigger)}" };
         var keys = new TextBlock { FontFamily = Look.Text, FontSize = 13, FontWeight = FontWeights.Medium, TextAlignment = TextAlignment.Center, MinWidth = 44 };
-        var button = new Border { Child = keys, Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(6), Background = White(0.06), BorderThickness = new Thickness(1), Cursor = Cursors.Hand, ToolTip = "Click, then hold the keys you want" };
+        var button = new Border { Child = keys, Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(6), Background = White(0.06), BorderThickness = new Thickness(1), Cursor = Cursors.Hand, ToolTip = "Click, then hold the keys or mouse side button you want" };
         string? hint = null;
 
         showShortcut = () =>
         {
-            bool isDefault = config.Trigger == Config.DefaultTrigger;
-            caption.Text = hint ?? (Recording ? "Press keys" : "Shortcut");
+            bool isDefault = config.IsDefaultTrigger;
+            caption.Text = hint ?? (Recording ? "Press keys or a side button" : "Shortcut");
             caption.Foreground = hint is null ? White(0.6) : Look.AccentBrush;
             restore.Foreground = White(isDefault ? 0.2 : 0.55);
             restore.Cursor = isDefault ? Cursors.Arrow : Cursors.Hand;
-            keys.Text = Recording ? (held == Mods.None ? "…" : Keys.Describe(held)) : Keys.Describe(config.Trigger);
+            keys.Text = Recording ? (held == Mods.None && heldButton is null ? "…" : Keys.Describe(held, heldButton)) : Keys.Describe(config.Trigger, config.Button);
             keys.Foreground = Recording ? Look.AccentBrush : White(0.9);
             button.BorderBrush = Recording ? Look.AccentBrush : Brushes.Transparent;
         };
         restore.MouseLeftButtonUp += (_, _) =>
         {
-            if (config.Shortcut is null) return;
+            if (config.Shortcut is null && config.MouseButton is null) return;
             config.Shortcut = null;
+            config.MouseButton = null;
             Save();
             showShortcut();
         };
         button.MouseLeftButtonUp += (_, _) =>
         {
-            if (Recording) { StopRecording(); return; }
+            if (Recording)  // a second click cancels; a click while the on/off field records switches to this one
+            {
+                bool mine = !recordingToggle;
+                StopRecording();
+                if (mine) return;
+            }
             Recording = true;
             held = Mods.None;
+            heldButton = null;
             hint = null;
             // Polls like the wheel does: WPF doesn't reliably see the Win key on its own.
             recorder = new DispatcherTimer(TimeSpan.FromMilliseconds(16), DispatcherPriority.Input, (_, _) =>
             {
                 var now = Native.HeldMods();
-                if (now != Mods.None)
+                int? side = Native.SideButtonDown(4) ? 4 : Native.SideButtonDown(5) ? 5 : null;
+                if (now != Mods.None || side is not null)
                 {
                     if ((now & (Mods.Win | Mods.Alt)) != 0 && (held & (Mods.Win | Mods.Alt)) == 0) Native.TapMaskKey();  // no Start menu on release
                     if ((now & held) == held) held = now;  // remember the most keys held at once
+                    heldButton ??= side;
                 }
-                else if (Keys.Count(held) >= 2)
+                else if (heldButton is not null || Keys.Count(held) >= 2)
                 {
                     config.Shortcut = (int)held;
+                    config.MouseButton = heldButton;
                     Save();
                     StopRecording();
                     return;
                 }
                 else if (held != Mods.None)
                 {
-                    hint = "Use two or more keys";
+                    hint = "Use two keys or a side button";
                     held = Mods.None;
                 }
                 showShortcut();
@@ -613,12 +629,95 @@ sealed class SettingsWindow : Window
         return new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Children = { caption, restore, button } };
     }
 
+    // On/off recorder: click the field, then press a key while holding at least one modifier (Ctrl + Alt + P). Esc, a
+    // second click or leaving the window cancels. The cross clears it, leaving no on/off shortcut.
+    bool recordingToggle;
+    string? toggleHint;
+    Action? showToggle;
+
+    FrameworkElement ToggleField()
+    {
+        var caption = new TextBlock { FontFamily = Look.Text, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+        var clear = new TextBlock { Text = "", FontFamily = Look.Glyphs, FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 8, 0), Background = Brushes.Transparent, ToolTip = "No on/off shortcut" };
+        var keys = new TextBlock { FontFamily = Look.Text, FontSize = 13, FontWeight = FontWeights.Medium, TextAlignment = TextAlignment.Center, MinWidth = 44 };
+        var button = new Border { Child = keys, Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(6), Background = White(0.06), BorderThickness = new Thickness(1), Cursor = Cursors.Hand, ToolTip = "Click, then press the keys that turn the wheel off and on" };
+
+        showToggle = () =>
+        {
+            bool none = config.Toggle is null;
+            caption.Text = toggleHint ?? (recordingToggle ? "Hold keys, press a key" : "Turn wheel on/off");
+            caption.Foreground = toggleHint is null ? White(0.6) : Look.AccentBrush;
+            clear.Foreground = White(none ? 0.2 : 0.55);
+            clear.Cursor = none ? Cursors.Arrow : Cursors.Hand;
+            var now = Native.HeldMods();
+            keys.Text = recordingToggle ? (now == Mods.None ? "…" : Keys.Describe(now) + " + …")
+                : config.Toggle is { } t ? Keys.Describe(t.Mods, key: t.Key) : "None";
+            keys.Foreground = recordingToggle ? Look.AccentBrush : White(none ? 0.35 : 0.9);
+            button.BorderBrush = recordingToggle ? Look.AccentBrush : Brushes.Transparent;
+        };
+        clear.MouseLeftButtonUp += (_, _) =>
+        {
+            if (config.ToggleKey is null && config.ToggleModifiers is null) return;
+            config.ToggleKey = null;
+            config.ToggleModifiers = null;
+            Save();
+            showToggle();
+        };
+        button.MouseLeftButtonUp += (_, _) =>
+        {
+            if (Recording)  // a second click cancels; a click while the shortcut field records switches to this one
+            {
+                bool mine = recordingToggle;
+                StopRecording();
+                if (mine) return;
+            }
+            Recording = recordingToggle = true;
+            toggleHint = null;
+            Mods last = Mods.None;
+            var keysBefore = Native.HeldKeys();
+            // Also polls, like the shortcut recorder: a combination another app has registered never arrives as a key press.
+            recorder = new DispatcherTimer(TimeSpan.FromMilliseconds(16), DispatcherPriority.Input, (_, _) =>
+            {
+                var now = Native.HeldMods();
+                if ((now & (Mods.Win | Mods.Alt)) != 0 && (last & (Mods.Win | Mods.Alt)) == 0) Native.TapMaskKey();  // no Start menu on release
+                last = now;
+                var keysNow = Native.HeldKeys();
+                foreach (int vk in keysNow)
+                    if (!keysBefore.Contains(vk) && recordingToggle) RecordToggle(vk, now);
+                keysBefore = keysNow;
+                showToggle();
+            }, Dispatcher);
+            showToggle();
+        };
+        showToggle();
+        return new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0), Children = { caption, clear, button } };
+    }
+
+    void RecordToggle(int vk, Mods mods)
+    {
+        if (vk == 0x1B) { StopRecording(); return; }  // Esc
+        if (mods == Mods.None) toggleHint = "Add Ctrl, Alt, Shift or Win";
+        else if (!Native.HotKeyFree(mods, vk)) toggleHint = $"{Keys.Describe(mods, key: vk)} is used by another app";
+        else
+        {
+            config.ToggleKey = vk;
+            config.ToggleModifiers = (int)mods;
+            Save();
+            StopRecording();
+            return;
+        }
+        showToggle?.Invoke();
+    }
+
     void StopRecording()
     {
         recorder?.Stop();
         recorder = null;
-        Recording = false;
+        Recording = recordingToggle = false;
         held = Mods.None;
+        heldButton = null;
+        toggleHint = null;
         showShortcut?.Invoke();
+        showToggle?.Invoke();
     }
 }

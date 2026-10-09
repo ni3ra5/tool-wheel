@@ -283,8 +283,8 @@ sealed class WheelView : Grid
             {
                 X1 = Look.Center + Math.Sin(a) * r0, Y1 = Look.Center - Math.Cos(a) * r0,
                 X2 = Look.Center + Math.Sin(a) * r1, Y2 = Look.Center - Math.Cos(a) * r1,
-                Stroke = new SolidColorBrush(Color.FromArgb((byte)(major ? 41 : 23), 0, 0, 0)),
-                StrokeThickness = major ? 0.9 : 0.6,
+                Stroke = new SolidColorBrush(Color.FromArgb((byte)(major ? 66 : 41), 0, 0, 0)),  // 26% / 16%
+                StrokeThickness = major ? 1.0 : 0.7,
             });
         }
         pointer = new Border
@@ -491,5 +491,69 @@ sealed class WheelWindow : Window
             Handle = new WindowInteropHelper(this).Handle;
             Native.MakeNonActivating(Handle);
         };
+    }
+}
+
+/// "Wheel off" / "Wheel on" for a moment below the cursor when the on/off shortcut is pressed. Same look and timings as
+/// the Mac's Badge: a dark pill with an accent (on) or grey (off) dot; fades in 120 ms, holds 900 ms, fades out 250 ms.
+sealed class BadgeWindow : Window
+{
+    const double FadeIn = 120, Hold = 900, FadeOut = 250, BelowCursor = 24;
+
+    readonly Ellipse dot = new() { Width = 8, Height = 8, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
+    readonly TextBlock text = new()
+    {
+        FontFamily = Look.Text, FontSize = 13, FontWeight = FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center,
+        Foreground = Look.Frozen(new SolidColorBrush(Color.FromArgb(230, 255, 255, 255))),
+    };
+    static readonly Brush OffDot = Look.Frozen(new SolidColorBrush(Color.FromArgb(77, 255, 255, 255)));
+    readonly System.Windows.Threading.DispatcherTimer shown = new() { Interval = TimeSpan.FromMilliseconds(FadeIn + Hold) };
+    IntPtr handle;
+
+    public BadgeWindow()
+    {
+        WindowStyle = WindowStyle.None;
+        AllowsTransparency = true;
+        Background = Brushes.Transparent;
+        Topmost = true;
+        ShowInTaskbar = false;
+        ShowActivated = false;
+        ResizeMode = ResizeMode.NoResize;
+        SizeToContent = SizeToContent.WidthAndHeight;
+        Left = Top = -10000;  // first shown invisible, then placed
+        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
+        Content = new Border
+        {
+            Height = 30, Padding = new Thickness(12, 0, 14, 0), CornerRadius = new CornerRadius(15),
+            Background = Look.Frozen(new SolidColorBrush(Color.FromArgb(245, 0x1E, 0x1E, 0x1E))),
+            BorderBrush = Look.Frozen(new SolidColorBrush(Color.FromArgb(26, 255, 255, 255))), BorderThickness = new Thickness(1),
+            Child = new StackPanel { Orientation = Orientation.Horizontal, Children = { dot, text } },
+        };
+        SourceInitialized += (_, _) =>
+        {
+            handle = new WindowInteropHelper(this).Handle;
+            Native.MakeNonActivating(handle, clickThrough: true);
+        };
+        shown.Tick += (_, _) =>
+        {
+            shown.Stop();
+            var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(FadeOut)) { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn } };
+            fade.Completed += (_, _) => { if (!shown.IsEnabled) Hide(); };  // unless it was flashed again meanwhile
+            BeginAnimation(OpacityProperty, fade);
+        };
+    }
+
+    public void Flash(bool on)
+    {
+        text.Text = on ? "Wheel on" : "Wheel off";
+        dot.Fill = on ? Look.AccentBrush : OffDot;
+        if (!IsVisible) { Opacity = 0; Show(); }
+        UpdateLayout();
+        Native.GetCursorPos(out var p);
+        var (_, scale) = Native.MonitorAt(p);
+        Native.PlaceTopmost(handle, p.X - (int)Math.Round(ActualWidth * scale / 2), p.Y + (int)Math.Round(BelowCursor * scale));
+        BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(FadeIn)) { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut } });
+        shown.Stop();
+        shown.Start();
     }
 }

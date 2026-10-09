@@ -27,7 +27,7 @@ Hold a shortcut, and your favourite apps fan out around the cursor on a clicky d
 - **Feels physical** – molded-plastic slices and a knob that turns in clicky 10° detents with a soft, heavy *thock*.
 - **Two ways to open** – click a tool, or just hover and let go of the shortcut.
 - **Shows what's running** – a small dot marks apps that are already open.
-- **No permissions needed** – no accessibility prompts or keyboard hooks.
+- **No permissions needed** – no accessibility prompts or keyboard hooks. (Only a mouse side button as the shortcut asks for Accessibility on a Mac, so its Back/Forward can be blocked.)
 
 ## 📦 Install
 
@@ -59,6 +59,7 @@ Hold a shortcut, and your favourite apps fan out around the cursor on a clicky d
 | Open an app | Hover its slice, then click (or release the keys) | same |
 | Settings | Click ⚙︎ on the knob | Click ⚙︎ on the knob, or the tray icon |
 | Close the wheel | Let go of the keys anywhere else | same |
+| Turn the wheel off / on | Your on/off shortcut, if you set one in Settings | same |
 
 ## ⚙️ Settings
 
@@ -67,7 +68,8 @@ The Settings window lets you:
 - **add apps** by searching everything installed,
 - **rearrange** them with the grip beside each slice, or **remove** one by holding its trash,
 - **colour-code** a slot with a band along its outer edge (8 preset colours),
-- **change the shortcut** (two or more of ⌃ ⌥ ⇧ ⌘), or restore the default,
+- **change the shortcut** (two or more of ⌃ ⌥ ⇧ ⌘, or a mouse side button on its own or with keys), or restore the default,
+- set a **shortcut that turns the wheel off and on** (e.g. ⌃⌥P; none by default),
 - choose to **open apps by** clicking or by releasing the shortcut,
 - **open at login**.
 

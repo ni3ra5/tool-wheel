@@ -27,6 +27,19 @@ static class Native
         return m;
     }
 
+    /// Every non-modifier key held now (virtual-key codes), skipping mouse buttons and the mask key. Polled because a
+    /// combination another app has registered never reaches our window as a key press.
+    public static HashSet<int> HeldKeys()
+    {
+        var keys = new HashSet<int>();
+        for (int vk = 0x08; vk <= 0xFE; vk++)
+            if (vk is not (0x10 or 0x11 or 0x12 or 0x5B or 0x5C or (>= 0xA0 and <= 0xA5) or 0xE8) && Down(vk)) keys.Add(vk);
+        return keys;
+    }
+
+    /// Side button 4 or 5 (VK_XBUTTON1 / VK_XBUTTON2), as polling sees it.
+    public static bool SideButtonDown(int button) => Down(button == 4 ? 0x05 : 0x06);
+
     [StructLayout(LayoutKind.Sequential)] struct KEYBDINPUT { public ushort wVk, wScan; public uint dwFlags, time; public IntPtr dwExtraInfo; }
     [StructLayout(LayoutKind.Sequential)] struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr dwExtraInfo; }
     [StructLayout(LayoutKind.Explicit)] struct InputUnion { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
@@ -39,6 +52,94 @@ static class Native
     {
         static INPUT Key(uint flags) => new() { type = 1, u = new() { ki = new() { wVk = 0xE8, dwFlags = flags } } };
         SendInput(2, new[] { Key(0), Key(2 /* KEYEVENTF_KEYUP */) }, Marshal.SizeOf<INPUT>());
+    }
+
+    // ---- Side-button shortcut: swallow its presses so the app under the cursor doesn't also go Back/Forward ----
+
+    delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
+    [StructLayout(LayoutKind.Sequential)] struct MSLLHOOKSTRUCT { public POINT pt; public uint mouseData, flags, time; public IntPtr extra; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam, lParam; public uint time; public POINT pt; public uint priv; }
+    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id, HookProc proc, IntPtr module, uint thread);
+    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern int GetMessage(out MSG msg, IntPtr hwnd, uint min, uint max);
+    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string? name);
+
+    static volatile int sideButton, swallowed;  // the shortcut's button; the one whose press was eaten and not yet let go
+    static volatile int sideMods;
+    static volatile bool hooked;
+    static HookProc? hookProc;  // kept alive: the hook only holds a function pointer to it
+
+    /// Called whenever the shortcut changes. The hook goes in the first time a side button is the shortcut and stays.
+    /// It runs on its own thread: on the UI thread, every mouse in the system would stall whenever WPF is busy.
+    public static void WatchSideButton(int? button, Mods mods)
+    {
+        sideMods = (int)mods;
+        sideButton = button ?? 0;
+        if (button is null || hookProc is not null) return;
+        hookProc = OnMouse;
+        new System.Threading.Thread(() =>
+        {
+            hooked = SetWindowsHookEx(14 /* WH_MOUSE_LL */, hookProc, GetModuleHandle(null), 0) != IntPtr.Zero;
+            while (GetMessage(out _, IntPtr.Zero, 0, 0) > 0) { }
+        }) { IsBackground = true, Name = "Side-button hook" }.Start();
+    }
+
+    /// Whether the shortcut's side button is held. A swallowed press never reaches the key state, so with the hook in
+    /// only its own record counts; that also means the keys must already be held when the button goes down.
+    public static bool SideButtonHeld(int button) => hooked ? swallowed == button : SideButtonDown(button);
+
+    static IntPtr OnMouse(int code, IntPtr wParam, IntPtr lParam)
+    {
+        const int WM_XBUTTONDOWN = 0x020B, WM_XBUTTONUP = 0x020C;
+        int message = (int)wParam;
+        if (code >= 0 && message is WM_XBUTTONDOWN or WM_XBUTTONUP)
+        {
+            int button = (Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam).mouseData >> 16) == 1 ? 4 : 5;  // XBUTTON1 is button 4
+            if (message == WM_XBUTTONDOWN && button == sideButton && !SettingsWindow.Recording && (int)HeldMods() == sideMods)
+            {
+                swallowed = button;
+                return 1;
+            }
+            if (message == WM_XBUTTONUP && button == swallowed)
+            {
+                swallowed = 0;
+                return 1;
+            }
+        }
+        return CallNextHookEx(IntPtr.Zero, code, wParam, lParam);
+    }
+
+    // ---- On/off shortcut: a system hotkey (no hook, no permission). WM_HOTKEY arrives on the registering thread ----
+
+    public const int ToggleHotKeyId = 1;
+    public const int WM_HOTKEY = 0x0312;
+    [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr hwnd, int id, uint mods, uint vk);
+    [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr hwnd, int id);
+    [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint type);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetKeyNameText(int lParam, StringBuilder name, int size);
+
+    static uint HotKeyMods(Mods m) =>
+        (m.HasFlag(Mods.Alt) ? 1u : 0) | (m.HasFlag(Mods.Ctrl) ? 2u : 0) | (m.HasFlag(Mods.Shift) ? 4u : 0) | (m.HasFlag(Mods.Win) ? 8u : 0)
+        | 0x4000 /* MOD_NOREPEAT */;
+
+    public static bool RegisterToggle(Mods mods, int vk) => RegisterHotKey(IntPtr.Zero, ToggleHotKeyId, HotKeyMods(mods), (uint)vk);
+    public static void UnregisterToggle() => UnregisterHotKey(IntPtr.Zero, ToggleHotKeyId);
+
+    /// Whether no other app (or Windows itself) has this combination; checked by registering it for a moment.
+    public static bool HotKeyFree(Mods mods, int vk)
+    {
+        if (!RegisterHotKey(IntPtr.Zero, 0xBFFF, HotKeyMods(mods), (uint)vk)) return false;
+        UnregisterHotKey(IntPtr.Zero, 0xBFFF);
+        return true;
+    }
+
+    /// The key's name in the current keyboard layout ("P", "F5", "Space").
+    public static string KeyName(int vk)
+    {
+        uint scan = MapVirtualKey((uint)vk, 0 /* MAPVK_VK_TO_VSC */);
+        bool extended = vk is >= 0x21 and <= 0x2E;  // Page Up…Delete and the arrows; otherwise named as their number-pad twins
+        var name = new StringBuilder(32);
+        return GetKeyNameText((int)(scan << 16 | (extended ? 1u << 24 : 0)), name, name.Capacity) > 0 ? name.ToString() : $"Key {vk}";
     }
 
     // ---- Cursor, monitors, window placement (physical pixels) ----
@@ -67,14 +168,20 @@ static class Native
     public static void PlaceTopmost(IntPtr hwnd, int x, int y, int size) =>
         SetWindowPos(hwnd, new IntPtr(-1) /* HWND_TOPMOST */, x, y, size, size, 0x10 /* SWP_NOACTIVATE */ | 0x40 /* SWP_SHOWWINDOW */);
 
+    /// Same, keeping the window's own size.
+    public static void PlaceTopmost(IntPtr hwnd, int x, int y) =>
+        SetWindowPos(hwnd, new IntPtr(-1), x, y, 0, 0, 0x1 /* SWP_NOSIZE */ | 0x10 | 0x40);
+
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hwnd, int index);
     [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr hwnd, int index, int value);
 
     /// Clicks reach the wheel without stealing focus from the app underneath, and it stays out of Alt+Tab.
-    public static void MakeNonActivating(IntPtr hwnd)
+    /// With `clickThrough`, clicks pass to whatever is underneath instead.
+    public static void MakeNonActivating(IntPtr hwnd, bool clickThrough = false)
     {
-        const int GWL_EXSTYLE = -20, WS_EX_NOACTIVATE = 0x08000000, WS_EX_TOOLWINDOW = 0x80, WS_EX_TOPMOST = 0x8;
-        SetWindowLong(hwnd, GWL_EXSTYLE, GetWindowLong(hwnd, GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST);
+        const int GWL_EXSTYLE = -20, WS_EX_NOACTIVATE = 0x08000000, WS_EX_TOOLWINDOW = 0x80, WS_EX_TOPMOST = 0x8, WS_EX_TRANSPARENT = 0x20;
+        SetWindowLong(hwnd, GWL_EXSTYLE, GetWindowLong(hwnd, GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
+            | (clickThrough ? WS_EX_TRANSPARENT : 0));
     }
 
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);

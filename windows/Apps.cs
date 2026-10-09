@@ -28,8 +28,31 @@ static class Apps
     static bool Owns(Tool tool, Native.AppWindow window)
     {
         var (exe, id) = Identity(tool);
-        return exe is not null && string.Equals(exe, window.Exe, Ignore) || id is not null && string.Equals(id, window.AppId, Ignore);
+        if (id is not null) return string.Equals(id, window.AppId, Ignore);
+        return exe is not null && window.Exe is not null && (string.Equals(exe, window.Exe, Ignore) || InSubfolder(exe, window.Exe));
     }
+
+    /// Many apps start from a launcher and keep their windows in a program further down their own folder: Discord.exe
+    /// runs app-1.0.9261\Discord.exe, Steam's window is bin\cef\…\steamwebhelper.exe, Opera's launcher runs
+    /// <version>\opera.exe. A program right beside the tool's is another app (Word and Excel), and shared folders such
+    /// as Windows or Program Files hold everyone's programs, so neither counts.
+    static bool InSubfolder(string toolExe, string windowExe)
+    {
+        string folder = Path.GetDirectoryName(toolExe) + @"\", windowFolder = Path.GetDirectoryName(windowExe) + @"\";
+        return windowFolder.Length > folder.Length && windowFolder.StartsWith(folder, Ignore) && !Shared(folder);
+    }
+
+    static readonly string[] SharedFolders = new[]
+    {
+        Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86, Environment.SpecialFolder.LocalApplicationData,
+        Environment.SpecialFolder.ApplicationData, Environment.SpecialFolder.UserProfile,
+    }.Select(f => Environment.GetFolderPath(f) + @"\")
+     .Append(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs") + @"\")
+     .ToArray();
+
+    static bool Shared(string folder) =>
+        folder.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows) + @"\", Ignore)
+        || SharedFolders.Any(f => string.Equals(folder, f, Ignore));
 
     /// Per tool: whether it has a window open now (the wheel's grey dot).
     public static List<bool> Running(IEnumerable<Tool> tools)

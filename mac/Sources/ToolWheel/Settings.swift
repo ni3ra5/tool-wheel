@@ -8,7 +8,10 @@ final class SettingsStore: ObservableObject {
             saveConfig(config)
             preview.load(config.wheel)
             Shortcut.current = config.trigger
+            Shortcut.button = config.button
+            Shortcut.toggle = config.toggle
             Shortcut.releaseToOpen = config.releaseToOpen ?? false
+            SideButtons.update()
         }
     }
     /// The wheel shown on the left, in edit mode.
@@ -300,33 +303,55 @@ struct WheelEditor: View {
     }
 }
 
-/// Shows the shortcut; click it, then press and release a new combination of two or more modifier keys.
-/// Esc or a second click cancels. The arrow restores the default.
+extension Notification.Name {
+    /// Starting one shortcut recorder stops the other.
+    static let stopRecording = Notification.Name("ToolWheel.stopRecording")
+}
+
+/// Shows the shortcut; click it, then press and release a new combination of two or more modifier keys, or a mouse
+/// side button on its own or with keys. Esc or a second click cancels. The arrow restores the default.
 struct ShortcutField: View {
     @ObservedObject var store: SettingsStore
     @State private var recording = false
     @State private var held: NSEvent.ModifierFlags = []
+    @State private var heldButton: Int?
+    @State private var buttonDown = false
     @State private var hint: String?
     @State private var monitor: Any?
 
     func start() {
+        NotificationCenter.default.post(name: .stopRecording, object: nil)
         recording = true
         held = []
+        heldButton = nil
+        buttonDown = false
         hint = nil
         Shortcut.recording = true
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { event in
-            if event.type == .keyDown {
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown, .otherMouseDown, .otherMouseUp]) { event in
+            switch event.type {
+            case .keyDown:
                 if event.keyCode == 53 { stop() }  // Esc
                 return nil                          // don't let keys leak into the search field
+            case .otherMouseDown where event.buttonNumber == 3 || event.buttonNumber == 4:  // buttons 4 and 5
+                if heldButton == nil { heldButton = event.buttonNumber + 1 }
+                buttonDown = true
+            case .otherMouseUp where event.buttonNumber + 1 == heldButton:
+                buttonDown = false
+            default:
+                break
             }
             let now = event.modifierFlags.intersection(Shortcut.keys)
-            if !now.isEmpty {
+            if !now.isEmpty || buttonDown {
                 if now.isSuperset(of: held) { held = now }  // remember the most keys held at once
-            } else if held.rawValue.nonzeroBitCount >= 2 {
-                store.config.shortcut = held.rawValue
+            } else if heldButton != nil || held.rawValue.nonzeroBitCount >= 2 {
+                var config = store.config
+                config.shortcut = held.rawValue
+                config.mouseButton = heldButton
+                store.config = config
                 stop()
+                if config.button != nil { SideButtons.update(prompt: true) }
             } else if !held.isEmpty {
-                hint = "Use two or more keys"
+                hint = "Use two keys or a side button"
                 held = []
             }
             return nil
@@ -338,16 +363,23 @@ struct ShortcutField: View {
         monitor = nil
         recording = false
         held = []
+        heldButton = nil
+        buttonDown = false
         Shortcut.recording = false
     }
 
     var body: some View {
-        let isDefault = store.config.trigger == Shortcut.standard
+        let isDefault = store.config.isDefaultTrigger
         HStack(spacing: 8) {
-            Text(hint ?? (recording ? "Press keys" : "Shortcut"))
+            Text(hint ?? (recording ? "Press keys or a side button" : "Shortcut"))
                 .font(.system(size: 12))
                 .foregroundStyle(hint == nil ? .white.opacity(0.6) : accent)
-            Button { store.config.shortcut = nil } label: {
+            Button {
+                var config = store.config
+                config.shortcut = nil
+                config.mouseButton = nil
+                store.config = config
+            } label: {
                 Image(systemName: "arrow.counterclockwise").font(.system(size: 11, weight: .semibold))
             }
             .buttonStyle(.plain)
@@ -355,7 +387,8 @@ struct ShortcutField: View {
             .disabled(isDefault)
             .help("Restore \(Shortcut.symbols(Shortcut.standard))")
             Button { recording ? stop() : start() } label: {
-                Text(recording ? (held.isEmpty ? "…" : Shortcut.symbols(held)) : Shortcut.symbols(store.config.trigger))
+                Text(recording ? (held.isEmpty && heldButton == nil ? "…" : Shortcut.describe(held, heldButton))
+                               : Shortcut.describe(store.config.trigger, store.config.button))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(recording ? accent : .white.opacity(0.9))
                     .frame(minWidth: 44)
@@ -365,8 +398,88 @@ struct ShortcutField: View {
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(accent.opacity(recording ? 1 : 0), lineWidth: 1))
             }
             .buttonStyle(.plain)
-            .help("Click, then hold the keys you want")
+            .help("Click, then hold the keys or mouse side button you want")
         }
+        .onReceive(NotificationCenter.default.publisher(for: .stopRecording)) { _ in if recording { stop() } }
+        .onDisappear { stop() }
+    }
+}
+
+/// The on/off shortcut: click it, then press a key while holding at least one modifier (⌃⌥P). Esc or a second click
+/// cancels; the cross clears it, leaving no on/off shortcut.
+struct ToggleField: View {
+    @ObservedObject var store: SettingsStore
+    @State private var recording = false
+    @State private var held: NSEvent.ModifierFlags = []
+    @State private var hint: String?
+    @State private var monitor: Any?
+
+    func start() {
+        NotificationCenter.default.post(name: .stopRecording, object: nil)
+        recording = true
+        held = []
+        hint = nil
+        Shortcut.recording = true  // OnOff unregisters the hotkey meanwhile, so pressing it lands here
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { event in
+            held = event.modifierFlags.intersection(Shortcut.keys)
+            guard event.type == .keyDown else { return nil }
+            if event.keyCode == 53 {  // Esc
+                stop()
+            } else if held.isEmpty {
+                hint = "Add ⌃, ⌥, ⇧ or ⌘"
+            } else {
+                var config = store.config
+                config.toggleKey = Int(event.keyCode)
+                config.toggleModifiers = held.rawValue
+                store.config = config
+                stop()
+            }
+            return nil  // don't let keys leak into the search field
+        }
+    }
+
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        recording = false
+        held = []
+        hint = nil
+        Shortcut.recording = false
+    }
+
+    var body: some View {
+        let none = store.config.toggle == nil
+        HStack(spacing: 8) {
+            Text(hint ?? (recording ? "Hold keys, press a key" : "Turn wheel on/off"))
+                .font(.system(size: 12))
+                .foregroundStyle(hint == nil ? .white.opacity(0.6) : accent)
+            Button {
+                var config = store.config
+                config.toggleKey = nil
+                config.toggleModifiers = nil
+                store.config = config
+            } label: {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white.opacity(none ? 0.2 : 0.55))
+            .disabled(none)
+            .help("No on/off shortcut")
+            Button { recording ? stop() : start() } label: {
+                Text(recording ? (held.isEmpty ? "…" : Shortcut.symbols(held) + "…")
+                               : store.config.toggle.map { Shortcut.symbols($0.modifiers) + Shortcut.keyName($0.key) } ?? "None")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(recording ? accent : .white.opacity(none ? 0.35 : 0.9))
+                    .frame(minWidth: 44)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.06)))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(accent.opacity(recording ? 1 : 0), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .help("Click, then press the keys that turn the wheel off and on")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .stopRecording)) { _ in if recording { stop() } }
         .onDisappear { stop() }
     }
 }
@@ -402,7 +515,7 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             ZStack {
                 WheelEditor(store: store)
-                    .offset(y: -18)  // clear of the controls along the bottom
+                    .offset(y: -38)  // clear of the controls along the bottom
                 if store.config.wheel.isEmpty {
                     Text("Add tools from the list").font(.system(size: 11)).foregroundStyle(.white.opacity(0.35))
                         .offset(y: outerRadius + 24)
@@ -427,6 +540,7 @@ struct SettingsView: View {
             .overlay(alignment: .bottomTrailing) {
                 VStack(alignment: .trailing, spacing: 12) {
                     ShortcutField(store: store)
+                    ToggleField(store: store)
                     HStack(spacing: 8) {
                         Text("Open apps by")
                             .font(.system(size: 12))

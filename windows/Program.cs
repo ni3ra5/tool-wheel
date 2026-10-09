@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -38,9 +39,19 @@ sealed class Controller
     readonly WheelWindow wheel = new();
     readonly Clicker clicker = new();
     readonly System.Windows.Forms.NotifyIcon tray;
+    readonly System.Drawing.Icon icon, dimmedIcon;  // the tray's icon while the wheel is on / off
+    readonly BadgeWindow badge = new();
     SettingsWindow? settings;
-    Config config;
+    Config current = null!;
     DateTime configStamp;
+
+    Config config
+    {
+        get => current;
+        set { current = value; WatchSideButton(); }
+    }
+    bool on = true;       // the on/off shortcut turns the wheel off until it's pressed again or the app restarts
+    (Mods Mods, int Key)? hotKey;  // the on/off shortcut as registered now
     bool waitForRelease;  // after opening something, don't reopen until the keys are let go
     double scale = 1;     // the wheel's monitor scale; cursor maths is in physical pixels
     int ticks;
@@ -66,28 +77,38 @@ sealed class Controller
         open.Font = new System.Drawing.Font(open.Font, System.Drawing.FontStyle.Bold);  // what double-click does
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
         menu.Items.Add("Quit Tool Wheel", null, (_, _) => Quit());
+        icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!)!;
+        dimmedIcon = Faded(icon);
         tray = new System.Windows.Forms.NotifyIcon
         {
-            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!),
+            Icon = icon,
             Text = "Tool Wheel",
             ContextMenuStrip = menu,
             Visible = true,
         };
         tray.DoubleClick += (_, _) => OpenSettings();
         if (firstRun)
-            tray.ShowBalloonTip(5000, "Tool Wheel is running", $"Hold {Keys.Describe(config.Trigger)} anywhere to open the wheel.", System.Windows.Forms.ToolTipIcon.None);
+            tray.ShowBalloonTip(5000, "Tool Wheel is running", $"Hold {Keys.Describe(config.Trigger, config.Button)} anywhere to open the wheel.", System.Windows.Forms.ToolTipIcon.None);
+
+        ComponentDispatcher.ThreadFilterMessage += (ref MSG msg, ref bool handled) =>
+        {
+            if (msg.message != Native.WM_HOTKEY || (int)msg.wParam != Native.ToggleHotKeyId) return;
+            handled = true;
+            TurnOnOff();
+        };
 
         // ponytail: polls key state at 60Hz, which needs no keyboard hook. Switch to a low-level hook if a
-        // non-modifier shortcut (e.g. Ctrl+Space) is ever wanted.
+        // non-modifier shortcut (e.g. Ctrl+Space) is ever wanted. (A side-button shortcut adds a mouse hook; see Native.)
         new DispatcherTimer(TimeSpan.FromMilliseconds(16), DispatcherPriority.Input, (_, _) => Tick(), Dispatcher.CurrentDispatcher).Start();
     }
 
     void Tick()
     {
         if (++ticks % 60 == 0) ReloadIfEdited();  // picks up a hand-edited shortcut without a restart
+        SyncHotKey();
         if (SettingsWindow.Recording) return;     // holding a new shortcut in Settings mustn't open the wheel
 
-        bool held = Native.HeldMods() == config.Trigger;
+        bool held = on && settings is null && Native.HeldMods() == config.Trigger && (config.Button is not int button || Native.SideButtonHeld(button));
         if (!held) waitForRelease = false;
 
         if (held && !wheel.IsVisible && !waitForRelease) Open();
@@ -146,6 +167,48 @@ sealed class Controller
         }
     }
 
+    /// While the wheel is off, or Settings is open, its side button goes Back/Forward as usual, so the hook lets it through.
+    void WatchSideButton() => Native.WatchSideButton(on && settings is null ? config.Button : null, config.Trigger);
+
+    /// Registered except while Settings records a shortcut, so pressing it there records it instead of turning the
+    /// wheel off. Polled with the rest; RegisterHotKey belongs to this (the UI) thread.
+    void SyncHotKey()
+    {
+        var want = SettingsWindow.Recording ? null : config.Toggle;
+        if (want == hotKey) return;
+        if (hotKey is not null) Native.UnregisterToggle();
+        hotKey = want;
+        if (want is { } w) Native.RegisterToggle(w.Mods, w.Key);
+    }
+
+    void TurnOnOff()
+    {
+        on = !on;
+        if (!on && wheel.IsVisible)
+        {
+            wheel.Hide();  // no release-to-open: turning it off shouldn't open anything
+            waitForRelease = true;
+        }
+        WatchSideButton();
+        tray.Icon = on ? icon : dimmedIcon;
+        tray.Text = on ? "Tool Wheel" : "Tool Wheel (off)";
+        badge.Flash(on);
+    }
+
+    /// The tray icon at 35% opacity, for while the wheel is off.
+    static System.Drawing.Icon Faded(System.Drawing.Icon icon)
+    {
+        using var source = icon.ToBitmap();
+        var faded = new System.Drawing.Bitmap(source.Width, source.Height);
+        using (var g = System.Drawing.Graphics.FromImage(faded))
+        using (var alpha = new System.Drawing.Imaging.ImageAttributes())
+        {
+            alpha.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix { Matrix33 = 0.35f });
+            g.DrawImage(source, new System.Drawing.Rectangle(0, 0, source.Width, source.Height), 0, 0, source.Width, source.Height, System.Drawing.GraphicsUnit.Pixel, alpha);
+        }
+        return System.Drawing.Icon.FromHandle(faded.GetHicon());
+    }
+
     void ReloadIfEdited()
     {
         var stamp = File.Exists(Store.ConfigPath) ? File.GetLastWriteTimeUtc(Store.ConfigPath) : default;
@@ -163,8 +226,9 @@ sealed class Controller
                 config = saved;
                 configStamp = File.GetLastWriteTimeUtc(Store.ConfigPath);
             });
-            settings.Closed += (_, _) => settings = null;
+            settings.Closed += (_, _) => { settings = null; WatchSideButton(); };
             settings.Show();
+            WatchSideButton();  // the wheel's shortcut rests while Settings is open
         }
         if (settings.WindowState == WindowState.Minimized) settings.WindowState = WindowState.Normal;
         Native.Activate(settings.Handle);

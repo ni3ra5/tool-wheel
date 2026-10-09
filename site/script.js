@@ -125,7 +125,7 @@
   const ticks = Array.from({ length: 72 }, (_, i) => { // engraved scale: a tick every 5°, a longer one every 30°
     const a = i * TAU / 72, major = i % 6 === 0, r0 = CENTER - DIAL_RIM - 3, r1 = r0 - (major ? 5 : 3);
     const [x1, y1] = at(a, r0), [x2, y2] = at(a, r1);
-    return `<line x1="${f2(x1)}" y1="${f2(y1)}" x2="${f2(x2)}" y2="${f2(y2)}" stroke="rgba(0,0,0,${major ? 0.16 : 0.09})" stroke-width="${major ? 0.9 : 0.6}"/>`;
+    return `<line x1="${f2(x1)}" y1="${f2(y1)}" x2="${f2(x2)}" y2="${f2(y2)}" stroke="rgba(0,0,0,${major ? 0.26 : 0.16})" stroke-width="${major ? 1 : 0.7}"/>`;
   }).join('');
 
   const gear = '<circle r="4.3" fill="none" stroke="currentColor" stroke-width="2.3"/>' +

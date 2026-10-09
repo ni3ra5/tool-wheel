@@ -1,4 +1,6 @@
 import AppKit
+import ApplicationServices
+import Carbon
 import SwiftUI
 
 // MARK: - Config
@@ -50,22 +52,216 @@ let configURL = FileManager.default.homeDirectoryForCurrentUser
 struct Config: Codable {
     var wheel: [Tool]
     var shortcut: UInt?  // modifier flags to hold; nil means the default
+    var mouseButton: Int?  // a side button (4 or 5) held along with those keys, which may then be none
+    var toggleKey: Int?  // the on/off shortcut: a key code…
+    var toggleModifiers: UInt?  // …and the modifier flags held with it
     var releaseToOpen: Bool?  // true: letting go of the shortcut opens the hovered tool; nil/false: click to open
 
-    var trigger: NSEvent.ModifierFlags { shortcut.map { NSEvent.ModifierFlags(rawValue: $0) } ?? Shortcut.standard }
+    var button: Int? { mouseButton == 4 || mouseButton == 5 ? mouseButton : nil }
+    /// The on/off shortcut, or nil for none. It needs at least one modifier, or it would swallow a key everywhere.
+    var toggle: (modifiers: NSEvent.ModifierFlags, key: Int)? {
+        guard let toggleKey, let toggleModifiers, toggleModifiers != 0 else { return nil }
+        return (NSEvent.ModifierFlags(rawValue: toggleModifiers), toggleKey)
+    }
+    /// No keys and no button would mean "always held"; that falls back to the default.
+    var trigger: NSEvent.ModifierFlags {
+        guard let shortcut, shortcut != 0 || button != nil else { return Shortcut.standard }
+        return NSEvent.ModifierFlags(rawValue: shortcut)
+    }
+    var isDefaultTrigger: Bool { trigger == Shortcut.standard && button == nil }
 }
 
-/// The wheel opens while a combination of modifier keys is held (no other key, so no extra permission is needed).
+/// The wheel opens while a combination of modifier keys is held (no other key, so no extra permission is needed),
+/// optionally with a mouse side button.
 enum Shortcut {
     static let keys: NSEvent.ModifierFlags = [.control, .option, .shift, .command]
     static let standard: NSEvent.ModifierFlags = [.control, .option, .command]
     static var current = standard
+    static var button: Int?
+    static var toggle: (modifiers: NSEvent.ModifierFlags, key: Int)?
     static var recording = false  // Settings is capturing a new shortcut; don't open the wheel meanwhile
+    static var settingsOpen = false  // the wheel's shortcut rests while Settings is open
     static var releaseToOpen = false
 
     static func symbols(_ flags: NSEvent.ModifierFlags) -> String {
         [(NSEvent.ModifierFlags.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")]
             .filter { flags.contains($0.0) }.map(\.1).joined()
+    }
+
+    static func describe(_ flags: NSEvent.ModifierFlags, _ button: Int?) -> String {
+        [symbols(flags), button.map { "Mouse \($0)" } ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    /// The key's name in the current keyboard layout ("P", "F5", "Space").
+    static func keyName(_ code: Int) -> String {
+        let named: [Int: String] = [
+            kVK_Return: "↩", kVK_Tab: "⇥", kVK_Space: "Space", kVK_Delete: "⌫", kVK_ForwardDelete: "⌦",
+            kVK_LeftArrow: "←", kVK_RightArrow: "→", kVK_DownArrow: "↓", kVK_UpArrow: "↑",
+            kVK_Home: "↖", kVK_End: "↘", kVK_PageUp: "⇞", kVK_PageDown: "⇟",
+            kVK_F1: "F1", kVK_F2: "F2", kVK_F3: "F3", kVK_F4: "F4", kVK_F5: "F5", kVK_F6: "F6",
+            kVK_F7: "F7", kVK_F8: "F8", kVK_F9: "F9", kVK_F10: "F10", kVK_F11: "F11", kVK_F12: "F12",
+        ]
+        if let name = named[code] { return name }
+        guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+              let data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { return "#\(code)" }
+        let layout = Unmanaged<CFData>.fromOpaque(data).takeUnretainedValue()
+        var deadKeys: UInt32 = 0
+        var chars = [UniChar](repeating: 0, count: 4)
+        var length = 0
+        let status = UCKeyTranslate(UnsafeRawPointer(CFDataGetBytePtr(layout)).assumingMemoryBound(to: UCKeyboardLayout.self),
+                                    UInt16(code), UInt16(kUCKeyActionDisplay), 0, UInt32(LMGetKbdType()),
+                                    OptionBits(kUCKeyTranslateNoDeadKeysMask), &deadKeys, chars.count, &length, &chars)
+        return status == 0 && length > 0 ? String(utf16CodeUnits: chars, count: length).uppercased() : "#\(code)"
+    }
+}
+
+/// The on/off shortcut, registered as a system hotkey (Carbon's, which needs no permission). Off lasts until it's
+/// pressed again or the app restarts. Unregistered while Settings records a shortcut, so pressing it there records it
+/// instead of turning the wheel off.
+enum OnOff {
+    static var on = true
+    static var pressed: () -> Void = {}
+    private static var hotKey: EventHotKeyRef?
+    private static var handler: EventHandlerRef?
+    private static var registered: String?  // what's registered now, as "modifiers-key"
+
+    /// Polled with the wheel's tick.
+    static func sync() {
+        let want = Shortcut.recording ? nil : Shortcut.toggle
+        let key = want.map { "\($0.modifiers.rawValue)-\($0.key)" }
+        guard key != registered else { return }
+        if let hotKey { UnregisterEventHotKey(hotKey) }
+        hotKey = nil
+        registered = key
+        guard let want else { return }
+        if handler == nil {
+            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+            InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in OnOff.pressed(); return 0 }, 1, &spec, nil, &handler)
+        }
+        RegisterEventHotKey(UInt32(want.key), carbonModifiers(want.modifiers), EventHotKeyID(signature: 0x5457_4F4E, id: 1),
+                            GetApplicationEventTarget(), 0, &hotKey)
+    }
+
+    static func carbonModifiers(_ flags: NSEvent.ModifierFlags) -> UInt32 {
+        var m = 0
+        if flags.contains(.command) { m |= cmdKey }
+        if flags.contains(.option) { m |= optionKey }
+        if flags.contains(.control) { m |= controlKey }
+        if flags.contains(.shift) { m |= shiftKey }
+        return UInt32(m)
+    }
+}
+
+/// "Wheel off" / "Wheel on" for a moment below the cursor when the on/off shortcut is pressed. Same look and timings as
+/// Windows' BadgeWindow: a dark pill with an accent (on) or grey (off) dot; fades in 120 ms, holds 900 ms, fades out 250 ms.
+struct BadgeView: View {
+    let on: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle().fill(on ? accent : .white.opacity(0.3)).frame(width: 8, height: 8)
+            Text(on ? "Wheel on" : "Wheel off")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 14)
+        .frame(height: 30)
+        .background(Capsule().fill(Color(white: 30.0 / 255).opacity(0.96)))
+        .overlay(Capsule().strokeBorder(.white.opacity(0.1), lineWidth: 1))
+    }
+}
+
+@MainActor
+final class Badge {
+    let panel: NSPanel
+    var generation = 0  // a newer flash cancels the older one's fade-out
+
+    init() {
+        panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .popUpMenu
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    }
+
+    func flash(on: Bool) {
+        let view = NSHostingView(rootView: BadgeView(on: on))
+        let size = view.fittingSize
+        panel.contentView = view
+        let mouse = NSEvent.mouseLocation  // AppKit y is up, so 24 pt below the cursor is minus
+        panel.setFrame(NSRect(x: (mouse.x - size.width / 2).rounded(), y: (mouse.y - 24 - size.height).rounded(),
+                              width: size.width, height: size.height), display: true)
+        if !panel.isVisible {
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            self.panel.animator().alphaValue = 1
+        }
+        generation += 1
+        let mine = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12 + 0.9) {
+            guard mine == self.generation else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.25
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                self.panel.animator().alphaValue = 0
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                if mine == self.generation { self.panel.orderOut(nil) }
+            }
+        }
+    }
+}
+
+/// While a side button is the shortcut, an event tap swallows its presses so the app under the cursor doesn't also
+/// go Back/Forward. That needs Accessibility permission, asked for only when a side button is picked; without it
+/// the wheel still opens (by polling) and the button keeps its usual action.
+enum SideButtons {
+    static var tap: CFMachPort?
+    static var held: Int?  // the side button whose press was swallowed and not yet let go
+
+    /// A swallowed press never shows in pressedMouseButtons, so with the tap in only its own record counts; that also
+    /// means the keys must already be held when the button goes down.
+    static func down(_ button: Int) -> Bool {
+        tap != nil ? held == button : NSEvent.pressedMouseButtons & (1 << (button - 1)) != 0
+    }
+
+    /// Puts the tap in once a side button is the shortcut and permission is granted. Stays for the session.
+    static func update(prompt: Bool = false) {
+        guard Shortcut.button != nil, tap == nil,
+              AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": prompt] as CFDictionary) else { return }
+        let mask = CGEventMask(1 << CGEventType.otherMouseDown.rawValue) | CGEventMask(1 << CGEventType.otherMouseUp.rawValue)
+        tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+                                eventsOfInterest: mask, callback: { _, type, event, _ in SideButtons.handle(type, event) },
+                                userInfo: nil)
+        guard let tap else { return }
+        CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, tap, 0), .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+    }
+
+    static func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return Unmanaged.passUnretained(event)
+        }
+        let button = Int(event.getIntegerValueField(.mouseEventButtonNumber)) + 1  // 0 is the left button
+        let mods = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue)).intersection(Shortcut.keys)
+        if type == .otherMouseDown, button == Shortcut.button, OnOff.on, !Shortcut.recording, !Shortcut.settingsOpen,
+           mods == Shortcut.current {
+            held = button
+            return nil
+        }
+        if type == .otherMouseUp, button == held {
+            held = nil
+            return nil
+        }
+        return Unmanaged.passUnretained(event)
     }
 }
 
@@ -382,7 +578,7 @@ struct TickScale: View {
                 var tick = Path()
                 tick.move(to: CGPoint(x: c.x + r0 * sin(a), y: c.y - r0 * cos(a)))
                 tick.addLine(to: CGPoint(x: c.x + r1 * sin(a), y: c.y - r1 * cos(a)))
-                ctx.stroke(tick, with: .color(.black.opacity(major ? 0.16 : 0.09)), lineWidth: major ? 0.9 : 0.6)
+                ctx.stroke(tick, with: .color(.black.opacity(major ? 0.26 : 0.16)), lineWidth: major ? 1.0 : 0.7)
             }
         }
     }
@@ -538,12 +734,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: NSPanel!
     var settingsWindow: NSWindow?
     var waitForRelease = false  // after launching a tool, don't reopen until keys are let go
+    var ticks = 0
+    var badge: Badge!
 
     func applicationDidFinishLaunching(_ note: Notification) {
         let firstRun = !FileManager.default.fileExists(atPath: configURL.path)
         let config = loadConfig()  // creates tools.json on first run
         Shortcut.current = config.trigger
+        Shortcut.button = config.button
+        Shortcut.toggle = config.toggle
         Shortcut.releaseToOpen = config.releaseToOpen ?? false
+        SideButtons.update()
+        badge = Badge()
+        OnOff.pressed = { [weak self] in MainActor.assumeIsolated { self?.turnOnOff() } }  // Carbon calls it on the main thread
         // No visible menu bar for an accessory app, but text fields still need these shortcuts.
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -600,7 +803,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func tick() {
-        let held = NSEvent.modifierFlags.intersection(Shortcut.keys) == Shortcut.current && !Shortcut.recording
+        ticks += 1
+        if ticks % 120 == 0 { SideButtons.update() }  // picks up Accessibility permission granted after the ask
+        OnOff.sync()
+        Shortcut.settingsOpen = settingsWindow.map { $0.isVisible || $0.isMiniaturized } ?? false
+        let held = OnOff.on && !Shortcut.settingsOpen && NSEvent.modifierFlags.intersection(Shortcut.keys) == Shortcut.current
+            && (Shortcut.button.map(SideButtons.down) ?? true) && !Shortcut.recording
         if !held { waitForRelease = false }
 
         if held && !panel.isVisible && !waitForRelease { show() }
@@ -621,6 +829,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let gear = hypot(dx, dy + gearOffset) < gearHitRadius  // AppKit y is up, so "below" is -gearOffset
             if gear != model.gearHovered { model.gearHovered = gear }
         }
+    }
+
+    func turnOnOff() {
+        OnOff.on.toggle()
+        if !OnOff.on && panel.isVisible {
+            hide()  // no release-to-open: turning it off shouldn't open anything
+            waitForRelease = true
+        }
+        badge.flash(on: OnOff.on)
     }
 
     func openSettings() {

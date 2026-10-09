@@ -23,22 +23,35 @@ public enum Mods { None = 0, Ctrl = 1, Alt = 2, Shift = 4, Win = 8 }
 
 static class Keys
 {
-    public static string Describe(Mods m) => string.Join(" + ",
+    public static string Describe(Mods m, int? button = null, int? key = null) => string.Join(" + ",
         new[] { (Mods.Ctrl, "Ctrl"), (Mods.Alt, "Alt"), (Mods.Shift, "Shift"), (Mods.Win, "Win") }
-            .Where(k => m.HasFlag(k.Item1)).Select(k => k.Item2));
+            .Where(k => m.HasFlag(k.Item1)).Select(k => k.Item2)
+            .Concat(button is int b ? new[] { $"Mouse {b}" } : Array.Empty<string>())
+            .Concat(key is int vk ? new[] { Native.KeyName(vk) } : Array.Empty<string>()));
 
     public static int Count(Mods m) => System.Numerics.BitOperations.PopCount((uint)m);
 }
 
 /// Same shape as the Mac app's tools.json; `shortcut` holds <see cref="Mods"/> flags here.
+/// `mouseButton` is a side button (4 or 5) held along with those keys, which may then be none.
+/// `toggleKey` + `toggleModifiers` is the optional on/off shortcut: a virtual-key code and <see cref="Mods"/> flags here.
 public class Config
 {
     public List<Tool> Wheel { get; set; } = new();
     public int? Shortcut { get; set; }
+    public int? MouseButton { get; set; }
+    public int? ToggleKey { get; set; }
+    public int? ToggleModifiers { get; set; }
     public bool? ReleaseToOpen { get; set; }
 
+    /// The on/off shortcut, or null for none. It needs at least one modifier, or it would swallow a key everywhere.
+    [JsonIgnore] public (Mods Mods, int Key)? Toggle => ToggleKey is int k && ToggleModifiers is int m && m != 0 ? ((Mods)m, k) : null;
+
     public static readonly Mods DefaultTrigger = Mods.Ctrl | Mods.Alt | Mods.Win;  // like ⌃⌥⌘ on the Mac
-    [JsonIgnore] public Mods Trigger => Shortcut is int s ? (Mods)s : DefaultTrigger;
+    [JsonIgnore] public int? Button => MouseButton is 4 or 5 ? MouseButton : null;
+    // No keys and no button would mean "always held"; that falls back to the default.
+    [JsonIgnore] public Mods Trigger => Shortcut is int s && (s != 0 || Button is not null) ? (Mods)s : DefaultTrigger;
+    [JsonIgnore] public bool IsDefaultTrigger => Trigger == DefaultTrigger && Button is null;
 }
 
 static class Store

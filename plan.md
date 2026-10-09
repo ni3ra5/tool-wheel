@@ -124,6 +124,25 @@ Newest at the bottom. Each entry: what was decided, and why.
 - **Themes removed** (the user's call), along with the Theme dropdown and the `theme` setting: the wheel has one look again, the original white Porcelain. Replaces the themes entry above. Slot colours and press-and-hold delete stay, on both platforms.
 - **Website feature headings rewritten to say what the app does**, because the old ones read as innuendo together ("Small, quick, and nice to touch", "Feels physical", "Click, or just let go"). Now: "Your apps, one shortcut away"; cards "Appears at your cursor", "Designed like hardware", "Two ways to launch", "Shows running apps", "No permissions needed", "Easy to customise". Body text unchanged.
 - **Windows "Open at login" is a `Tool Wheel.lnk` shortcut in the user's Startup folder**, replacing the `HKCU\…\Run` entry. On the test PC Windows skipped the Run entry at sign-in with no error (the Shell-Core log shows every other Run app starting) and Task Manager's Startup apps never listed it, even after re-creating the value; no policy, StartupApproved flag or security block explained it. A Startup shortcut to the same exe appeared in Task Manager at once and started the app after a restart. On launch the app moves any old Run entry over to the shortcut.
+- **The shortcut can include a mouse side button** (button 4 or 5), on its own or with modifier keys (e.g. `Mouse 4`, `Ctrl + Mouse 4`); the user's call over "button alone only" and "button only with keys". Stored as `"mouseButton": 4` next to `shortcut` in `tools.json` (shortcut `0` = no keys); no keys and no button falls back to the default. Recorded in Settings like keys: press a side button, alone or while holding keys, and let go. Keyboard-only shortcuts still need two or more keys. Mac and Windows both.
+  - **While a side button is the shortcut, its normal Back/Forward is blocked** (the user's call over letting it through). Only the exact combination is swallowed; the same button with other keys still goes Back. The keys must already be held when the button goes down.
+  - Windows: a low-level mouse hook (`WH_MOUSE_LL`), no permission needed, installed the first time a side button is the shortcut, on its own thread so a busy UI thread can't stall the system's mouse. Replaces "no hooks at all" on Windows for this case only; keys are still polled.
+  - Mac: a `CGEventTap`, which needs **Accessibility permission**, asked for only when a side button is recorded. Without it the wheel still opens (polling `pressedMouseButtons`) but the button also goes Back/Forward. README and the site's "No permissions needed" card say so.
+
+### 2026-10-10
+
+- **Optional on/off shortcut that turns the wheel off and back on**, set in Settings; none by default. Mac and Windows both. The user's calls:
+  - **Modifier keys plus one regular key** (e.g. `Ctrl + Alt + P`, `⌃⌥P`), at least one modifier, rather than modifiers only (which would fire during ordinary combos like Ctrl+Shift+arrows). Registered as a system hotkey: `RegisterHotKey` on Windows, Carbon's `RegisterEventHotKey` on the Mac. No hook, no permission. Stored as `toggleKey` (platform key code) and `toggleModifiers` (platform modifier flags) in `tools.json`.
+  - **Feedback: a small badge 24 px below the cursor**, "Wheel off" (grey dot) / "Wheel on" (accent dot), dark pill 30 px high; fades in 120 ms, holds 900 ms, fades out 250 ms. Same on both. Windows' tray icon also dims to 35% (tooltip "Tool Wheel (off)") while off; the Mac has no menu bar icon.
+  - **Off doesn't survive a restart**: the wheel always starts on, so it can't be left off by accident.
+  - **No on/off switch in Settings**, only the shortcut field.
+  - While off, the wheel shortcut does nothing and a side-button shortcut goes Back/Forward again. Turning it off while the wheel is open closes it without opening anything.
+- **Settings has a third row on the right, "Turn wheel on/off"**, between Shortcut and Open apps by: the keys (or "None"), a cross to clear, click to record (Esc cancels). Windows also refuses a combination another app or Windows already has ("Already in use"); the Mac can't tell. The wheel editor moved up 20 px to make room (Windows margin −36 → −76, Mac offset −18 → −38).
+- **Clicking one shortcut field while the other is recording switches to it**; clicking the same field again still cancels. Same on both.
+- **The wheel's shortcut does nothing while Settings is open** (the user's call), including minimised; a side-button shortcut goes Back/Forward as usual meanwhile. The on/off shortcut still works. Mac and Windows.
+- **Windows: the on/off recorder also polls key state**, besides listening for key presses. A combination another app has registered is swallowed before it reaches the window, so the user's Ctrl + F9 (held by some other app at the time) did nothing at all; now it says "Ctrl + F9 is used by another app" (replaces "Already in use").
+- **Knob tick scale a little more visible** (the user's ask): major ticks 16% → 26% black at 0.9 → 1.0 px, minor 9% → 16% at 0.6 → 0.7 px; lengths unchanged. Mac, Windows and the website demo. App icons (rendered from the knob) not re-rendered.
+- **Windows: a window also counts as a tool's when its .exe is in a subfolder of the tool's folder**, for the open dot and for bringing it forward. Launcher-style apps run their windows from elsewhere: Discord's `Discord.exe` runs `app-<version>\Discord.exe`, Steam's window is `bin\cef\…\steamwebhelper.exe`, Opera's launcher runs `<version>\opera.exe`; on the test PC Discord and Steam were open with no dot. Programs right beside the tool's don't count (Word vs Excel), nor do shared folders (Windows and anything under it, Program Files, Program Files (x86), AppData, AppData\Local\Programs, the user folder).
 
 ## Next
 
@@ -144,7 +163,10 @@ Newest at the bottom. Each entry: what was decided, and why.
 
 ## Known limits
 
-- Shortcuts are modifier-only (no letter keys) on both platforms; letter keys would need permissions or a hook.
+- Shortcuts are modifier keys, optionally with mouse side button 4 or 5 (no letter keys, no other mouse buttons) on both platforms; letter keys would need permissions or a hook.
+- Mac: the side-button shortcut's Accessibility permission belongs to the app's ad-hoc signature, so a new version may need it granted again (remove and re-add Tool Wheel under Privacy & Security → Accessibility). Mac side-button code is compile-checked only; not yet tried on a Mac.
+- Windows: the side-button hook can't see or block clicks on admin windows (same limit as the keys).
+- Mac: the on/off shortcut can't be checked against other apps' hotkeys (pressing one that's taken does nothing while recording, with no message), and its code (Carbon hotkey, key names, badge) is compile-checked only; not yet tried on a Mac.
 - Mac downloads show a Gatekeeper warning until notarized; Windows shows SmartScreen until signed.
 - The Settings preview can't show the live blur (a grey disc stands in).
 - Windows: the shortcut doesn't work while an admin window is in front (Task Manager, which always runs as admin for admin accounts; admin terminals; installers). Windows hides key state from normal apps then, so the 60Hz poll sees nothing and the Start-menu mask key is blocked too. Hooks are blocked the same way. Fixes, if it's ever wanted: an optional run-as-admin mode (scheduled task at login, apps launched unelevated via Explorer), or `uiAccess` (needs a signed exe installed in Program Files).
