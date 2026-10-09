@@ -23,6 +23,7 @@ static class Program
 
         using var single = new Mutex(true, "ToolWheel.SingleInstance", out bool first);
         if (!first) return;  // already running (it lives in the tray)
+        try { LaunchAtLogin.MigrateRunKey(); } catch { }  // never worth failing to start over
 
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         var controller = new Controller();
@@ -176,17 +177,32 @@ sealed class Controller
     }
 }
 
+/// A shortcut in the user's Startup folder. Not the `HKCU\…\Run` key: on the test PC Windows skipped that entry at
+/// sign-in and Task Manager never listed it, while a Startup shortcut to the same exe works and shows up there.
 static class LaunchAtLogin
 {
-    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run", Name = "ToolWheel";
+    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run", RunName = "ToolWheel";
+    static string Shortcut => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Tool Wheel.lnk");
 
-    public static bool IsEnabled => Registry.CurrentUser.OpenSubKey(RunKey)?.GetValue(Name) is not null;
+    public static bool IsEnabled => File.Exists(Shortcut);
 
     public static void Set(bool on)
     {
-        using var key = Registry.CurrentUser.CreateSubKey(RunKey);
-        if (on) key.SetValue(Name, $"\"{Environment.ProcessPath}\"");
-        else key.DeleteValue(Name, throwOnMissingValue: false);
+        if (!on) { File.Delete(Shortcut); return; }
+        dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
+        var link = shell.CreateShortcut(Shortcut);
+        link.TargetPath = Environment.ProcessPath!;
+        link.WorkingDirectory = Path.GetDirectoryName(Environment.ProcessPath!)!;
+        link.Save();
+    }
+
+    /// Moves an "open at login" left in the Run key by earlier versions over to the shortcut.
+    public static void MigrateRunKey()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+        if (key?.GetValue(RunName) is null) return;
+        key.DeleteValue(RunName);
+        Set(true);
     }
 }
 

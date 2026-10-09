@@ -123,6 +123,7 @@ Newest at the bottom. Each entry: what was decided, and why.
   - The Mac's `--snapshot out.png --graphite` previews Graphite without changing the saved theme.
 - **Themes removed** (the user's call), along with the Theme dropdown and the `theme` setting: the wheel has one look again, the original white Porcelain. Replaces the themes entry above. Slot colours and press-and-hold delete stay, on both platforms.
 - **Website feature headings rewritten to say what the app does**, because the old ones read as innuendo together ("Small, quick, and nice to touch", "Feels physical", "Click, or just let go"). Now: "Your apps, one shortcut away"; cards "Appears at your cursor", "Designed like hardware", "Two ways to launch", "Shows running apps", "No permissions needed", "Easy to customise". Body text unchanged.
+- **Windows "Open at login" is a `Tool Wheel.lnk` shortcut in the user's Startup folder**, replacing the `HKCU\…\Run` entry. On the test PC Windows skipped the Run entry at sign-in with no error (the Shell-Core log shows every other Run app starting) and Task Manager's Startup apps never listed it, even after re-creating the value; no policy, StartupApproved flag or security block explained it. A Startup shortcut to the same exe appeared in Task Manager at once and started the app after a restart. On launch the app moves any old Run entry over to the shortcut.
 
 ## Next
 
