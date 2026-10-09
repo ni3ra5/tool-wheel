@@ -62,10 +62,11 @@ Hold a shortcut, and your favourite apps fan out around the cursor on a clicky d
 
 ## ⚙️ Settings
 
-On the Mac, the Settings window lets you:
+The Settings window lets you:
 
 - **add apps** by searching everything installed,
-- **rearrange or remove** them with the grip and trash beside each slice,
+- **rearrange** them with the grip beside each slice, or **remove** one by holding its trash,
+- **colour-code** a slot with a band along its outer edge (8 preset colours),
 - **change the shortcut** (two or more of ⌃ ⌥ ⇧ ⌘), or restore the default,
 - choose to **open apps by** clicking or by releasing the shortcut,
 - **open at login**.
@@ -74,7 +75,7 @@ Everything is saved to a `tools.json` (`~/.config/toolwheel/` on macOS, `%APPDAT
 
 ```json
 {
-  "wheel": [{ "name": "Safari", "path": "/Applications/Safari.app" }],
+  "wheel": [{ "name": "Safari", "path": "/Applications/Safari.app", "color": "#0A84FF" }],
   "releaseToOpen": false
 }
 ```

@@ -112,6 +112,17 @@ Newest at the bottom. Each entry: what was decided, and why.
 - **Backdrop stops inside the wheel** (8 px short of the rim) instead of extending one gap past it. It still fills the gaps between slices but never shows outside the edge. Its lit border went with it (no rim left to light). Replaces the 2026-10-08 "rim one gap past the wheel" decision. Mac, Windows and the website demo.
 - **Every Mac or Windows release must show up on the landing page's download buttons.** The site already picks up the newest release from the GitHub API, so the rule is to keep release tags and zip names in the shape it matches (`mac-v*` + `.zip`, `windows-v*` + `*-win-x64.zip`), update `site/` in the same change when that shape or the download set changes, and check both buttons after publishing. Written into `CLAUDE.md` under Conventions.
 - **Root `vercel.json` sets the output directory to `site/`** (no install or build). The first Vercel deploy served the repo root and returned 404 because there's no `index.html` there; the file makes it work without relying on the dashboard's Root Directory setting.
+- **Slots can be colour-coded** with a band along the slice's outer edge (4 px, following its rounded corners, lifting with it). **The colour belongs to the app, not the position**: stored per tool as hex (`"color": "#34C759"` in `tools.json`), so it moves with the app when reordered and can group related apps. Picked in Settings from a colour dot in each slice's pill (now 80 px wide: colour, trash, grip), which opens a swatch grid: None plus 8 presets (Orange `#FF3C00`, Amber `#FFB300`, Green `#34C759`, Teal `#30B0C7`, Blue `#0A84FF`, Purple `#AF52DE`, Pink `#FF2D55`, Graphite `#8E8E93`). **Mac only for now**; Windows and the website demo are listed under Next.
+- **Removing a slot in Settings is press-and-hold on its trash**, not a click: the pill fills with accent from left to right over 0.7 s, then the tool is removed (with a trackpad tap). Letting go early drains the fill and nothing happens. Prevents accidental deletes. Mac only for now (Windows still deletes on click; see Next).
+- **Slot colours and press-and-hold delete ported to Windows**, so both apps match again (the "UI is the same on Mac and Windows" rule in `CLAUDE.md`, which the two entries above broke). Same presets, 4 px band, 80 px pill and 0.7 s fill; Windows cancels the hold if the pointer wanders 30 px, like the Mac.
+- **Themes, picked from a dropdown at the top right of the Settings wheel panel.** Two for now:
+  - **Porcelain**: the original white plastic (the default).
+  - **Graphite**, after the Huly Dial reference: dark graphite slices with a faint grille, a diagonal hatch over the hovered slice, a bright silver knob with a knurled rim, a warm accent glow round the knob's edge on the side it points to, a dark well and backdrop, and a faint ring just outside the wheel.
+  - A theme only changes colours and surface details; geometry, timings and the accent stay shared. Stored as `"theme"` in `tools.json`. Same names and values on Mac (`Theme`/`Finish` in `main.swift`) and Windows (`Finish` in `WheelWindow.cs`).
+  - **Switching is instant** on both (WPF can't crossfade the brushes the way SwiftUI does, so the Mac doesn't either). The Settings window itself stays dark.
+  - The Mac's `--snapshot out.png --graphite` previews Graphite without changing the saved theme.
+- **Themes removed** (the user's call), along with the Theme dropdown and the `theme` setting: the wheel has one look again, the original white Porcelain. Replaces the themes entry above. Slot colours and press-and-hold delete stay, on both platforms.
+- **Website feature headings rewritten to say what the app does**, because the old ones read as innuendo together ("Small, quick, and nice to touch", "Feels physical", "Click, or just let go"). Now: "Your apps, one shortcut away"; cards "Appears at your cursor", "Designed like hardware", "Two ways to launch", "Shows running apps", "No permissions needed", "Easy to customise". Body text unchanged.
 
 ## Next
 
@@ -122,6 +133,7 @@ Newest at the bottom. Each entry: what was decided, and why.
 - Installer (Inno Setup or MSIX) for a Start menu entry and uninstaller; code signing to drop the SmartScreen warning.
 
 **Website**
+- Show slot colour bands in the demo wheel.
 - Vercel project exists; get it serving `site/` (root `vercel.json`, or Root Directory `site` in the dashboard), then add the URL to the README.
 
 **macOS**

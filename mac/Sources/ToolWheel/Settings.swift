@@ -132,8 +132,9 @@ extension View {
     }
 }
 
-let editorSize = wheelSize + 84       // room for the controls ring outside the wheel
-let pillSize = CGSize(width: 58, height: 26)
+let editorSize = wheelSize + 124       // room for the controls ring outside the wheel
+let pillSize = CGSize(width: 80, height: 26)
+let holdToDelete = 0.7  // seconds the trash must be held
 
 /// Pills are wider than tall, so at 3 and 9 o'clock they reach further toward the wheel; push those out
 /// so the clearance from the rim is the same all round.
@@ -141,11 +142,50 @@ func controlsRadius(_ angle: Double) -> CGFloat {
     outerRadius + 10 + pillSize.height / 2 + abs(sin(angle)) * (pillSize.width - pillSize.height) / 2
 }
 
-/// The wheel as it looks, static, with a control pill outside each tool's edge: trash to remove it,
+/// Swatches for a slot's colour band: none, or one of the presets.
+struct SwatchPicker: View {
+    let selected: String?
+    let pick: (String?) -> Void
+
+    var body: some View {
+        let swatches: [(name: String, hex: String?)] = [("None", nil)] + slotColors.map { ($0.name, Optional($0.hex)) }
+        LazyVGrid(columns: Array(repeating: GridItem(.fixed(22), spacing: 8), count: 3), spacing: 8) {
+            ForEach(swatches, id: \.name) { swatch in
+                Button { pick(swatch.hex) } label: {
+                    ZStack {
+                        if let hex = swatch.hex, let color = Color(hex: hex) {
+                            Circle().fill(color)
+                        } else {
+                            Circle().strokeBorder(.white.opacity(0.4), lineWidth: 1)
+                            Rectangle().fill(.white.opacity(0.4)).frame(width: 1, height: 16).rotationEffect(.degrees(45))
+                        }
+                    }
+                    .frame(width: 18, height: 18)
+                    .padding(2)
+                    .overlay(Circle().strokeBorder(.white.opacity(swatch.hex == selected ? 0.9 : 0), lineWidth: 1.5))
+                    .contentShape(Circle())  // "None" is only an outline, which otherwise takes clicks on its line alone
+                }
+                .buttonStyle(.plain)
+                .help(swatch.name)
+            }
+        }
+        .padding(12)
+    }
+}
+
+/// The wheel as it looks, static, with a control pill outside each tool's edge: colour dot, trash (hold) to remove it,
 /// six-dot grip to drag it round to a new position. Tools glide to their new places.
 struct WheelEditor: View {
     @ObservedObject var store: SettingsStore
     @State private var dragging: String?  // id of the tool being dragged
+    @State private var coloring: String?  // id of the tool whose colour picker is open
+    @State private var holding: String?   // id of the tool whose trash is (or was last) held
+    @State private var holdProgress: CGFloat = 0
+
+    func setColor(_ tool: Tool, _ hex: String?) {
+        if let i = store.config.wheel.firstIndex(where: { $0.id == tool.id }) { store.config.wheel[i].color = hex }  // saves
+        coloring = nil
+    }
 
     /// Slice in the direction of the point (editor coordinates); anywhere outside the knob counts.
     func slice(at p: CGPoint) -> Int? {
@@ -182,19 +222,45 @@ struct WheelEditor: View {
         let preview = store.preview
         let active = dragging == tool.id || (dragging == nil && preview.hovered == i)
         let angle = preview.angles[tool.id] ?? 0
+        let color = tool.color.flatMap { Color(hex: $0) }
         return HStack(spacing: 9) {
-            Button {
-                withAnimation(.spring(duration: 0.35, bounce: 0.15)) { store.config.wheel.removeAll { $0.id == tool.id } }
-            } label: {
-                Image(systemName: "trash").font(.system(size: 11, weight: .medium))
+            Button { coloring = tool.id } label: {
+                ZStack {
+                    if let color { Circle().fill(color) }
+                    else { Circle().strokeBorder(.white.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [2, 1.5])) }
+                }
+                .frame(width: 11, height: 11)
+                .frame(width: 18, height: 18)
+                .contentShape(Circle())  // a dashed outline alone only takes clicks on its line
             }
             .buttonStyle(.plain)
-            .foregroundStyle(preview.trashHovered == i ? accent : .white.opacity(0.45))
-            .onHover { inside in
-                guard dragging == nil else { return }
-                preview.trashHovered = inside ? i : nil
+            .help("Colour for \(tool.name)")
+            .popover(isPresented: Binding(get: { coloring == tool.id }, set: { if !$0 { coloring = nil } }), arrowEdge: .bottom) {
+                SwatchPicker(selected: tool.color) { setColor(tool, $0) }
             }
-            .help("Remove \(tool.name)")
+
+            // Hold to delete: the pill fills left to right; letting go early drains it and nothing happens.
+            Image(systemName: "trash")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(holding == tool.id && holdProgress > 0 ? .white : preview.trashHovered == i ? accent : .white.opacity(0.45))
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+                .onHover { inside in
+                    guard dragging == nil else { return }
+                    preview.trashHovered = inside ? i : nil
+                }
+                .onLongPressGesture(minimumDuration: holdToDelete, maximumDistance: 30) {
+                    NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+                    withAnimation(.spring(duration: 0.35, bounce: 0.15)) { store.config.wheel.removeAll { $0.id == tool.id } }
+                } onPressingChanged: { pressing in
+                    if pressing {
+                        holding = tool.id
+                        withAnimation(.linear(duration: holdToDelete)) { holdProgress = 1 }
+                    } else {
+                        withAnimation(.easeOut(duration: 0.2)) { holdProgress = 0 }
+                    }
+                }
+                .help("Hold to remove \(tool.name)")
 
             Grip()
                 .foregroundStyle(.white.opacity(active ? 0.85 : 0.45))
@@ -209,7 +275,13 @@ struct WheelEditor: View {
                 .gesture(reorder(tool))
         }
         .frame(width: pillSize.width, height: pillSize.height)
-        .background(Capsule().fill(.white.opacity(active || preview.trashHovered == i ? 0.09 : 0.04)))
+        .background {
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(active || preview.trashHovered == i ? 0.09 : 0.04))
+                Rectangle().fill(accent.opacity(0.6)).frame(width: pillSize.width * (holding == tool.id ? holdProgress : 0))
+            }
+            .clipShape(Capsule())
+        }
         .modifier(Polar(angle: angle, radius: controlsRadius(angle)))
         .transition(.popping(at: UnitPoint(x: 0.5 + sin(angle) * controlsRadius(angle) / pillSize.width,
                                            y: 0.5 - cos(angle) * controlsRadius(angle) / pillSize.height),

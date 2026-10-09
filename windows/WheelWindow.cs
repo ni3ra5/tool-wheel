@@ -15,7 +15,8 @@ namespace ToolWheel;
 static class Look
 {
     public const double Size = 400, Outer = 172, Center = 56, Gap = 2, KnobGap = 1.5, Corner = 6, DialRim = 5,
-        GearOffset = 26, GearHit = 14, RunningDot = 82, IconRadius = (Center + Outer) / 2 + 4, BackdropInset = 8;
+        GearOffset = 26, GearHit = 14, RunningDot = 82, IconRadius = (Center + Outer) / 2 + 4, BackdropInset = 8,
+        BandWidth = 4;  // colour band along a slice's outer edge
     public const double Detent = 2 * Math.PI / 36;  // 10° per click
 
     public static readonly Color Accent = Color.FromRgb(0xFF, 0x3C, 0x00);  // #FF3C00
@@ -24,6 +25,26 @@ static class Look
     public static readonly Brush GrayBrush = Frozen(new SolidColorBrush(Gray));
     public static readonly FontFamily Text = new("Segoe UI Variable Text, Segoe UI");
     public static readonly FontFamily Glyphs = new("Segoe Fluent Icons, Segoe MDL2 Assets");
+
+    /// Slot colours offered in Settings, the same as the Mac's.
+    public static readonly (string Name, string Hex)[] SlotColors =
+    {
+        ("Orange", "#FF3C00"), ("Amber", "#FFB300"), ("Green", "#34C759"), ("Teal", "#30B0C7"),
+        ("Blue", "#0A84FF"), ("Purple", "#AF52DE"), ("Pink", "#FF2D55"), ("Graphite", "#8E8E93"),
+    };
+
+    /// "#RRGGBB", or null if it isn't one.
+    public static Color? Hex(string? hex)
+    {
+        var digits = hex?.TrimStart('#');
+        if (digits is not { Length: 6 } || !uint.TryParse(digits, System.Globalization.NumberStyles.HexNumber, null, out var v)) return null;
+        return Color.FromRgb((byte)(v >> 16), (byte)(v >> 8), (byte)v);
+    }
+
+    /// The outer `BandWidth` of the wheel: a slice clipped to it is its colour band, rounded corners and all.
+    public static readonly Geometry Band = Frozen(new CombinedGeometry(GeometryCombineMode.Exclude,
+        new EllipseGeometry(new Point(Size / 2, Size / 2), Outer, Outer),
+        new EllipseGeometry(new Point(Size / 2, Size / 2), Outer - BandWidth, Outer - BandWidth)));
 
     /// Top-lit plastic, mapped over the whole wheel so every slice shares one light.
     public static readonly Brush Plastic = Frozen(new LinearGradientBrush(
@@ -170,6 +191,7 @@ sealed class WheelView : Grid
         public readonly Ellipse Dot = new() { Width = 3.5, Height = 3.5, Fill = new SolidColorBrush(Color.FromRgb(0xA3, 0xA3, 0xA3)) };
         readonly Path plastic = new() { Fill = Look.Plastic, Stroke = Look.Plastic, StrokeThickness = Look.Corner * 2, StrokeLineJoin = PenLineJoin.Round };
         readonly Path dots = new() { Fill = Look.Dots };
+        readonly Path band = new() { StrokeThickness = Look.Corner * 2, StrokeLineJoin = PenLineJoin.Round, Clip = Look.Band, Visibility = Visibility.Collapsed };
         readonly TranslateTransform lift = new();
         double shapedAngle = double.NaN, shapedSpan = double.NaN;
 
@@ -178,6 +200,7 @@ sealed class WheelView : Grid
             Key = KeyOf(tool);
             Slice.Children.Add(plastic);
             Slice.Children.Add(dots);
+            Slice.Children.Add(band);
             Slice.RenderTransform = lift;
             Icon = tool.Expanded is { } path && Native.Icon(path, 128) is { } icon
                 ? new Image { Source = icon }
@@ -194,12 +217,23 @@ sealed class WheelView : Grid
             {
                 shapedAngle = angle;
                 shapedSpan = span;
-                plastic.Data = dots.Data = Look.Wedge(angle - span / 2, angle + span / 2);
+                plastic.Data = dots.Data = band.Data = Look.Wedge(angle - span / 2, angle + span / 2);
             }
             lift.X = Math.Sin(angle) * up;  // hovered slices nudge outward along their slice
             lift.Y = -Math.Cos(angle) * up;
             Look.Place(Icon, Look.At(angle, Look.IconRadius + up));
             Look.Place(Dot, Look.At(angle, Look.RunningDot + up));
+        }
+
+        /// The tool's colour band, if it has one.
+        public void Paint(string? color)
+        {
+            if (Look.Hex(color) is Color c)
+            {
+                band.Fill = band.Stroke = new SolidColorBrush(c);
+                band.Visibility = Visibility.Visible;
+            }
+            else band.Visibility = Visibility.Collapsed;
         }
     }
 
@@ -341,6 +375,7 @@ sealed class WheelView : Grid
                 Look.Appear(entry.Icon);
                 Look.Appear(entry.Dot);
             }
+            entry.Paint(tools[i].Color);
             entry.Dot.Visibility = running is not null && i < running.Count && running[i] ? Visibility.Visible : Visibility.Collapsed;
             next.Add(entry);
         }

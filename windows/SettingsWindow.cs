@@ -7,14 +7,15 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 
 namespace ToolWheel;
 
 /// Settings, ported from the Mac (mac/Sources/ToolWheel/Settings.swift): dark, flat, dotted. The wheel on the left with
-/// a pill outside each slice (trash to remove, grip to drag round), installed apps on the right, and along the
-/// bottom open-at-login, the shortcut and the open mode. Every change is saved to tools.json straight away.
+/// a pill outside each slice (colour dot, trash to hold-remove, grip to drag round), installed apps on the right, and
+/// along the bottom open-at-login, the shortcut and the open mode. Every change is saved to tools.json straight away.
 sealed class SettingsWindow : Window
 {
     /// While the shortcut is being recorded, holding it mustn't open the wheel.
@@ -23,8 +24,9 @@ sealed class SettingsWindow : Window
     static readonly Color Surface = Color.FromRgb(0x18, 0x18, 0x18);
     static Brush White(double opacity) => Look.Frozen(new SolidColorBrush(Color.FromArgb((byte)Math.Round(opacity * 255), 255, 255, 255)));
 
-    const double EditorSize = Look.Size + 84;  // room for the controls ring outside the wheel
-    const double PillWidth = 58, PillHeight = 26;
+    const double EditorSize = Look.Size + 124;  // room for the controls ring outside the wheel
+    const double PillWidth = 80, PillHeight = 26;
+    const double HoldToDelete = 0.7;  // seconds the trash must be held, like the Mac
 
     readonly Config config;
     readonly Action<Config> changed;
@@ -37,6 +39,8 @@ sealed class SettingsWindow : Window
     readonly TextBox search;
     readonly List<Row> rows = new();
     string? dragging;  // key of the tool being dragged round
+    string? holding;   // key of the tool whose trash is being held
+    Point holdStart;
 
     public IntPtr Handle { get; private set; }
 
@@ -167,11 +171,14 @@ sealed class SettingsWindow : Window
     };
     static Ellipse Dot() => new() { Width = 3, Height = 3, Fill = Brushes.White };
 
-    /// Trash and grip in a capsule just past a slice's rim.
+    /// Colour dot, trash and grip in a capsule just past a slice's rim.
     sealed class Pill : Border
     {
         public readonly Tool Tool;
-        public readonly TextBlock Trash = new() { Text = "", FontFamily = Look.Glyphs, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent, Cursor = Cursors.Arrow };
+        public readonly Ellipse Spot = new() { Width = 11, Height = 11, StrokeDashArray = new DoubleCollection { 2, 1.5 } };
+        public readonly Grid Swatch;
+        public readonly TextBlock Trash = new() { Text = "", FontFamily = Look.Glyphs, FontSize = 11, Width = 18, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent, Cursor = Cursors.Arrow };
+        public readonly Rectangle HoldFill = new() { Width = 0, HorizontalAlignment = HorizontalAlignment.Left, Fill = Look.Frozen(new SolidColorBrush(Color.FromArgb(153, 0xFF, 0x3C, 0x00))) };
         public readonly Border Handle;
         public readonly UniformGrid Dots = SettingsWindow.Grip();
         public readonly Polar Polar = new();
@@ -183,12 +190,21 @@ sealed class SettingsWindow : Window
             Height = PillHeight;
             CornerRadius = new CornerRadius(PillHeight / 2);
             Handle = new Border { Child = Dots, Padding = new Thickness(4), Background = Brushes.Transparent, Cursor = Cursors.Hand, VerticalAlignment = VerticalAlignment.Center };
-            Child = new StackPanel
+            Swatch = new Grid { Width = 18, Height = 18, Background = Brushes.Transparent, Cursor = Cursors.Hand, VerticalAlignment = VerticalAlignment.Center, Children = { Spot }, ToolTip = $"Colour for {tool.Name}" };
+            Child = new Grid
             {
-                Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center,
-                Children = { Trash, new Border { Width = 9 }, Handle },
+                Clip = new RectangleGeometry(new Rect(0, 0, PillWidth, PillHeight), PillHeight / 2, PillHeight / 2),
+                Children =
+                {
+                    HoldFill,
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center,
+                        Children = { Swatch, new Border { Width = 9 }, Trash, new Border { Width = 9 }, Handle },
+                    },
+                },
             };
-            Trash.ToolTip = $"Remove {tool.Name}";
+            Trash.ToolTip = $"Hold to remove {tool.Name}";
             Polar.Place = () => Look.Place(this, new Point(EditorSize / 2 + Math.Sin(Polar.Angle) * Radius(Polar.Angle), EditorSize / 2 - Math.Cos(Polar.Angle) * Radius(Polar.Angle)));
         }
 
@@ -240,13 +256,40 @@ sealed class SettingsWindow : Window
 
         pill.Trash.MouseEnter += (_, _) => { if (dragging is null) Hover(preview.Hovered, IndexOf(tool)); };
         pill.Trash.MouseLeave += (_, _) => { if (dragging is null) Hover(preview.Hovered, null); };
-        pill.Trash.MouseLeftButtonUp += (_, _) =>
+        // Hold to delete: the pill fills left to right over HoldToDelete; letting go (or wandering off) drains it.
+        pill.Trash.MouseLeftButtonDown += (_, e) =>
         {
-            config.Wheel.RemoveAll(t => t.Same(tool));
-            Save();
-            LoadWheel(glide: true);
-            SyncRows();
+            holding = KeyOf(tool);
+            holdStart = e.GetPosition(this);
+            pill.Trash.CaptureMouse();
+            var fill = new DoubleAnimation(PillWidth, TimeSpan.FromSeconds(HoldToDelete));
+            fill.Completed += (_, _) =>
+            {
+                if (holding != KeyOf(tool)) return;  // let go in time
+                holding = null;
+                pill.Trash.ReleaseMouseCapture();
+                config.Wheel.RemoveAll(t => t.Same(tool));
+                Save();
+                LoadWheel(glide: true);
+                SyncRows();
+            };
+            pill.HoldFill.BeginAnimation(WidthProperty, fill);
+            RestylePills();
+            e.Handled = true;
         };
+        void LetGo()
+        {
+            if (holding != KeyOf(tool)) return;
+            holding = null;
+            pill.Trash.ReleaseMouseCapture();
+            pill.HoldFill.BeginAnimation(WidthProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(200)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+            RestylePills();
+        }
+        pill.Trash.MouseLeftButtonUp += (_, _) => LetGo();
+        pill.Trash.LostMouseCapture += (_, _) => LetGo();
+        pill.Trash.MouseMove += (_, e) => { if (holding == KeyOf(tool) && (e.GetPosition(this) - holdStart).Length > 30) LetGo(); };
+
+        pill.Swatch.MouseLeftButtonUp += (_, _) => PickColor(pill);
 
         pill.Handle.MouseEnter += (_, _) =>
         {
@@ -300,9 +343,60 @@ sealed class SettingsWindow : Window
             bool active = dragging == KeyOf(pill.Tool) || (dragging is null && preview.Hovered == i);
             bool trash = preview.TrashHovered == i;
             pill.Background = White(active || trash ? 0.09 : 0.04);
-            pill.Trash.Foreground = trash ? Look.AccentBrush : White(0.45);
+            pill.Trash.Foreground = holding == KeyOf(pill.Tool) ? White(1) : trash ? Look.AccentBrush : White(0.45);
+            var color = i >= 0 ? Look.Hex(config.Wheel[i].Color) : null;
+            pill.Spot.Fill = color is Color c ? new SolidColorBrush(c) : null;
+            pill.Spot.Stroke = color is null ? White(0.45) : null;  // dashed ring when there's no colour
             foreach (Ellipse dot in pill.Dots.Children) dot.Fill = White(active ? 0.85 : 0.45);
         }
+    }
+
+    /// Swatches for a slot's colour band: none, or one of the presets.
+    void PickColor(Pill pill)
+    {
+        string? selected = IndexOf(pill.Tool) is int at and >= 0 ? config.Wheel[at].Color : null;
+        var grid = new UniformGrid { Columns = 3 };
+        Popup? popup = null;
+        foreach (var (name, hex) in new (string, string?)[] { ("None", null) }.Concat(Look.SlotColors.Select(c => (c.Name, (string?)c.Hex))))
+        {
+            var cell = new Grid { Width = 22, Height = 22, Margin = new Thickness(4), Background = Brushes.Transparent, Cursor = Cursors.Hand, ToolTip = name };
+            if (Look.Hex(hex) is Color c) cell.Children.Add(new Ellipse { Width = 18, Height = 18, Fill = new SolidColorBrush(c) });
+            else
+            {
+                cell.Children.Add(new Ellipse { Width = 18, Height = 18, Stroke = White(0.4), StrokeThickness = 1 });
+                cell.Children.Add(new Line { X1 = 6, Y1 = 16, X2 = 16, Y2 = 6, Stroke = White(0.4), StrokeThickness = 1 });
+            }
+            if (string.Equals(hex, selected, StringComparison.OrdinalIgnoreCase))
+                cell.Children.Add(new Ellipse { Width = 22, Height = 22, Stroke = White(0.9), StrokeThickness = 1.5 });
+            cell.MouseLeftButtonUp += (_, _) =>
+            {
+                popup!.IsOpen = false;
+                int i = IndexOf(pill.Tool);
+                if (i < 0) return;
+                config.Wheel[i] = config.Wheel[i] with { Color = hex };
+                Save();
+                LoadWheel(glide: false);
+            };
+            grid.Children.Add(cell);
+        }
+        popup = Menu(pill.Swatch, grid);
+    }
+
+    /// A small dark popover under `anchor`, like the Mac's.
+    static Popup Menu(UIElement anchor, UIElement content)
+    {
+        var popup = new Popup
+        {
+            PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true,
+            PopupAnimation = PopupAnimation.Fade,
+            Child = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2B)), BorderBrush = White(0.1), BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10), Padding = new Thickness(8), Margin = new Thickness(0, 6, 0, 0), Child = content,
+            },
+        };
+        popup.IsOpen = true;
+        return popup;
     }
 
     // ---- The app list ----

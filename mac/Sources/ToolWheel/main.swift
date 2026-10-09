@@ -7,6 +7,7 @@ import SwiftUI
 struct Tool: Codable, Hashable, Identifiable {
     var name: String
     var path: String?  // optional only so old entries without one (removed custom commands) still decode
+    var color: String?  // hex like "#34C759": a colour band along the slice's outer edge; nil = none
 
     /// Same app = same tool regardless of display name, so it can't be added to the wheel twice.
     var id: String { path ?? name }
@@ -23,6 +24,22 @@ struct Tool: Codable, Hashable, Identifiable {
     func launch() {
         guard let p = expandedPath, let url = p.contains("://") ? URL(string: p) : URL(fileURLWithPath: p) else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+/// Slot colours offered in Settings. Stored per tool as hex, so the colour moves with the app when reordered.
+let slotColors: [(name: String, hex: String)] = [
+    ("Orange", "#FF3C00"), ("Amber", "#FFB300"), ("Green", "#34C759"), ("Teal", "#30B0C7"),
+    ("Blue", "#0A84FF"), ("Purple", "#AF52DE"), ("Pink", "#FF2D55"), ("Graphite", "#8E8E93"),
+]
+let bandWidth: CGFloat = 4  // colour band along a slice's outer edge
+
+extension Color {
+    /// "#RRGGBB"; nil if it isn't one.
+    init?(hex: String) {
+        let digits = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        guard digits.count == 6, let v = UInt32(digits, radix: 16) else { return nil }
+        self.init(red: Double(v >> 16 & 0xFF) / 255, green: Double(v >> 8 & 0xFF) / 255, blue: Double(v & 0xFF) / 255)
     }
 }
 
@@ -172,6 +189,7 @@ let gearOffset: CGFloat = 26     // settings icon sits this far below the wheel'
 let gearHitRadius: CGFloat = 14
 let runningDotRadius: CGFloat = 82  // "open" dot sits between a tool's icon and the knob
 let accent = Color(red: 1, green: 60.0 / 255, blue: 0)  // #FF3C00
+
 let plastic = LinearGradient(colors: [.white, Color(white: 0.935)], startPoint: .top, endPoint: .bottom)
 
 /// Points along a circle of radius `r` around `c`, from angle `from` to `to` (radians, clockwise from 12 o'clock).
@@ -205,6 +223,7 @@ struct Wedge: Shape {
 /// a removed one closes where it was.
 struct Slice: View, Animatable {
     var start: Double, end: Double
+    var color: Color? = nil
     @Environment(\.sliceOpening) private var opening
 
     var animatableData: AnimatablePair<Double, Double> {
@@ -222,6 +241,14 @@ struct Slice: View, Animatable {
         ZStack {
             piece
             DotTexture().mask(piece)
+            if let color {
+                // The slice's own shape, kept only along the outer edge, so the band follows its rounded corners.
+                ZStack {
+                    shape.fill(color)
+                    shape.stroke(color, style: StrokeStyle(lineWidth: corner * 2, lineJoin: .round))
+                }
+                .mask(Circle().strokeBorder(lineWidth: bandWidth).frame(width: outerRadius * 2, height: outerRadius * 2))
+            }
         }
     }
 }
@@ -387,7 +414,7 @@ struct WheelView: View {
     func wedge(_ i: Int) -> some View {
         let hovered = model.hovered == i, pressed = model.pressed == i
         let mid = model.angles[model.tools[i].id] ?? Double(i) * step
-        return Slice(start: mid - step / 2, end: mid + step / 2)
+        return Slice(start: mid - step / 2, end: mid + step / 2, color: model.tools[i].color.flatMap { Color(hex: $0) })
         .brightness(pressed ? -0.04 : hovered ? 0.02 : 0)
         .compositingGroup()
         .shadow(color: .black.opacity(hovered && !pressed ? 0.18 : 0), radius: 8, y: 5)

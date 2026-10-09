@@ -9,7 +9,8 @@ namespace ToolWheel;
 
 /// One wheel entry: an app (.exe, .lnk or shell:AppsFolder\<app ID>), or any file, folder or URL, to open.
 /// Paths may use environment variables such as %WINDIR%.
-public record Tool(string Name, string? Path)
+/// `Color` is an optional "#RRGGBB" band along the slice's outer edge; it belongs to the app, so it moves with it.
+public record Tool(string Name, string? Path, string? Color = null)
 {
     [JsonIgnore] public string? Expanded => Path is null ? null : Environment.ExpandEnvironmentVariables(Path);
 
