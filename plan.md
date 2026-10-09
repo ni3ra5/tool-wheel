@@ -9,7 +9,7 @@ Repo: <https://github.com/ni3ra5/tool-wheel> (public).
 | Platform | State | Latest release |
 | --- | --- | --- |
 | macOS | Working, used daily. Settings complete. | v0.4.0 (reordering, gliding icons, centred Settings, add/remove animation, smaller backdrop). |
-| Windows | Preview, being tested on a real PC (Windows 11). Wheel, Settings window and focus handling work. | v0.1.2 (add/remove animation, smaller backdrop). Portable `.exe`, no installer. |
+| Windows | Preview, being tested on a real PC (Windows 11). Wheel, Settings window and focus handling work. | v0.1.3 (slot colours, hold-to-delete, open at login via a Startup shortcut). Portable `.exe`, no installer. |
 | Website | Landing page in `site/` with download buttons and a playable wheel demo. Not deployed yet. | – |
 
 ## Architecture
