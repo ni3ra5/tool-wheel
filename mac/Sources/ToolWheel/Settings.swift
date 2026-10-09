@@ -590,6 +590,9 @@ struct SettingsView: View {
                 .scrollIndicators(.never)
                 .padding(.horizontal, -10)  // rows carry their own inset
 
+                UpdatesFooter(store: store)
+                    .padding(.top, -14)  // the stack's spacing; the footer brings its own
+
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 20)

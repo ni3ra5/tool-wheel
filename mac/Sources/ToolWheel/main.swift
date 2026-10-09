@@ -56,6 +56,8 @@ struct Config: Codable {
     var toggleKey: Int?  // the on/off shortcut: a key code…
     var toggleModifiers: UInt?  // …and the modifier flags held with it
     var releaseToOpen: Bool?  // true: letting go of the shortcut opens the hovered tool; nil/false: click to open
+    var checkForUpdates: Bool?  // at launch; nil means yes
+    var skipVersion: String?  // "Skip this version" on the update prompt
 
     var button: Int? { mouseButton == 4 || mouseButton == 5 ? mouseButton : nil }
     /// The on/off shortcut, or nil for none. It needs at least one modifier, or it would swallow a key everywhere.
@@ -736,6 +738,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var waitForRelease = false  // after launching a tool, don't reopen until keys are let go
     var ticks = 0
     var badge: Badge!
+    var updateWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         let firstRun = !FileManager.default.fileExists(atPath: configURL.path)
@@ -747,6 +750,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SideButtons.update()
         badge = Badge()
         OnOff.pressed = { [weak self] in MainActor.assumeIsolated { self?.turnOnOff() } }  // Carbon calls it on the main thread
+        checkAtLaunch()
         // No visible menu bar for an accessory app, but text fields still need these shortcuts.
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -829,6 +833,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let gear = hypot(dx, dy + gearOffset) < gearHitRadius  // AppKit y is up, so "below" is -gearOffset
             if gear != model.gearHovered { model.gearHovered = gear }
         }
+    }
+
+    /// Once, a few seconds after launch: says nothing unless there's an update the user hasn't skipped.
+    func checkAtLaunch() {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            let config = loadConfig()
+            guard config.checkForUpdates != false, let release = try? await Updater.check(),
+                  release.name != config.skipVersion else { return }
+            showUpdate(release)
+        }
+    }
+
+    /// "Check now" in Settings: shows the update even if it was skipped. Returns nil when it did, otherwise what to
+    /// tell the user.
+    @MainActor func checkNow() async -> String? {
+        guard Updater.current != nil else { return "Development builds don't update" }
+        do {
+            guard let release = try await Updater.check() else { return "Tool Wheel is up to date" }
+            showUpdate(release)
+            return nil
+        } catch {
+            return "Couldn't reach GitHub"
+        }
+    }
+
+    @MainActor func showUpdate(_ release: Updater.Release) {
+        if let updateWindow, updateWindow.isVisible {
+            NSApp.activate()
+            updateWindow.makeKeyAndOrderFront(nil)
+            return
+        }
+        let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.title = "Tool Wheel Update"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(white: 0.095, alpha: 1)
+        window.isReleasedWhenClosed = false
+        let view = NSHostingView(rootView: UpdateView(release: release, skip: {
+            var config = loadConfig()
+            config.skipVersion = release.name
+            saveConfig(config)
+        }, close: { [weak window] in window?.close() }))
+        window.contentView = view
+        window.setContentSize(view.fittingSize)
+        window.center()
+        updateWindow = window
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
     }
 
     @MainActor func turnOnOff() {

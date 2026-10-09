@@ -19,6 +19,7 @@ mac/        Swift / SwiftUI + AppKit, Swift Package (no Xcode project)
   Sources/ToolWheel/main.swift      config, wheel view, knob, app delegate, --snapshot / --icon modes
   Sources/ToolWheel/Settings.swift  settings window, wheel editor, shortcut recorder, login item
   Sources/ToolWheel/Click.swift     synthesised detent sound
+  Sources/ToolWheel/Updater.swift   update check and install, the update prompt, Settings' updates footer
   scripts/build-app.sh              universal .app + zip
   scripts/make-icon.sh              icon for every platform
 windows/    C# / WPF, .NET 8
@@ -28,6 +29,7 @@ windows/    C# / WPF, .NET 8
   Apps.cs            open-or-bring-forward, installed apps (Start menu's All apps)
   Config.cs          tools.json
   Native.cs          Win32: key state, cursor/monitors, mask key, other apps' windows, focus, shell icons
+  Updater.cs         update check and install, the update prompt window
   Click.cs       detent sound
 assets/     icon.png, preview.png (README)
 site/       landing page for Vercel: plain index.html, style.css, script.js (+ copies of icon.png, preview.png); vercel.json at the root points Vercel here
@@ -143,6 +145,12 @@ Newest at the bottom. Each entry: what was decided, and why.
 - **Windows: the on/off recorder also polls key state**, besides listening for key presses. A combination another app has registered is swallowed before it reaches the window, so the user's Ctrl + F9 (held by some other app at the time) did nothing at all; now it says "Ctrl + F9 is used by another app" (replaces "Already in use").
 - **Knob tick scale a little more visible** (the user's ask): major ticks 16% → 26% black at 0.9 → 1.0 px, minor 9% → 16% at 0.6 → 0.7 px; lengths unchanged. Mac, Windows and the website demo. App icons (rendered from the knob) not re-rendered.
 - **Windows: a window also counts as a tool's when its .exe is in a subfolder of the tool's folder**, for the open dot and for bringing it forward. Launcher-style apps run their windows from elsewhere: Discord's `Discord.exe` runs `app-<version>\Discord.exe`, Steam's window is `bin\cef\…\steamwebhelper.exe`, Opera's launcher runs `<version>\opera.exe`; on the test PC Discord and Steam were open with no dot. Programs right beside the tool's don't count (Word vs Excel), nor do shared folders (Windows and anything under it, Program Files, Program Files (x86), AppData, AppData\Local\Programs, the user folder).
+- **The apps check for updates and install them when the user agrees.** Mac and Windows, same flow and look. The user's calls: **install automatically** (not just open the download page) and **check only at launch** (not daily).
+  - Our own small updater rather than Sparkle (Mac) or Velopack/Squirrel (Windows), which expect signed builds and an installer we don't have.
+  - Check: 5 s after launch, unless `"checkForUpdates": false`; asks the GitHub API for the newest non-draft release tagged `windows-v*` (with a `*-win-x64.zip`, or `-win-arm64.zip` on ARM) or `mac-v*` (with a `.zip`), the same lookup as the site's buttons. Development builds (version 0.0.0; the Mac's `build-app.sh` now defaults to 0.0.0 instead of 0.1.0) never check.
+  - Prompt: a dark window like Settings, 420 wide: "Tool Wheel 0.1.5 is available", "You have 0.1.4. Updating takes a few seconds and restarts Tool Wheel.", the release notes cleaned to plain lines (box up to 180 px, scrolls), then **Skip this version** (saved as `"skipVersion"`, not asked again at launch) on the left and **Later** / **Update now** (accent) on the right. Failure shows "Couldn't update: …" in accent with **Open download page** / **Close**.
+  - Install: downloads the zip and the release's `SHA256SUMS` (now published by both release workflows) and refuses on a mismatch or when the release has no checksums (every release before this). Windows renames the running `ToolWheel.exe` to `.old` (deleted at next launch), puts the new one in its place and starts it with `--updated`, which waits up to 10 s for the old copy to quit instead of exiting as a second instance; the Startup shortcut keeps working. Mac unpacks with `ditto`, swaps the bundle with `replaceItemAt` and has it reopened a second after quitting.
+  - Settings: a footer under the app list with the version (or "Development build") and **Check now** on the right (which shows a skipped version too; the result replaces the version for 4 s), then a **Check for updates at launch** switch. Windows' tray menu also has **Check for updates**.
 
 ## Next
 
@@ -166,6 +174,7 @@ Newest at the bottom. Each entry: what was decided, and why.
 - Shortcuts are modifier keys, optionally with mouse side button 4 or 5 (no letter keys, no other mouse buttons) on both platforms; letter keys would need permissions or a hook.
 - Mac: the side-button shortcut's Accessibility permission belongs to the app's ad-hoc signature, so a new version may need it granted again (remove and re-add Tool Wheel under Privacy & Security → Accessibility). Mac side-button code is compile-checked only; not yet tried on a Mac.
 - Windows: the side-button hook can't see or block clicks on admin windows (same limit as the keys).
+- Updates: only releases from the updater's version on carry `SHA256SUMS`, so anyone on Windows v0.1.3 / Mac v0.4.0 or older updates by hand once. Installing needs write access to the app's folder (a Mac standard user can't write /Applications); otherwise it fails with "Open download page". Downloads aren't code-signed, so an update is exactly as trustworthy as a manual download. "Skip this version" can be lost if Settings is open at the time (Settings saves its own copy of tools.json). The actual swap and restart is untested until two releases with checksums exist; the Mac updater hasn't run at all.
 - Mac: the on/off shortcut can't be checked against other apps' hotkeys (pressing one that's taken does nothing while recording, with no message), and its code (Carbon hotkey, key names, badge) is compile-checked only; not yet tried on a Mac.
 - Mac downloads show a Gatekeeper warning until notarized; Windows shows SmartScreen until signed.
 - The Settings preview can't show the live blur (a grey disc stands in).

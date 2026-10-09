@@ -34,10 +34,13 @@ jobs:
               -p:IncludeNativeLibrariesForSelfExtract=true -p:Version=$VERSION -o out/$rid
             7z a "ToolWheel-$VERSION-$rid.zip" "./out/$rid/ToolWheel.exe" > /dev/null
           done
+          sha256sum *.zip > SHA256SUMS  # the in-app updater checks its download against this
       - uses: actions/upload-artifact@v4
         with:
           name: ToolWheel-windows
-          path: windows/*.zip
+          path: |
+            windows/*.zip
+            windows/SHA256SUMS
       - name: Publish
         if: startsWith(github.ref, 'refs/tags/windows-v')
         env:
@@ -45,4 +48,4 @@ jobs:
         run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --title "Tool Wheel for Windows ${GITHUB_REF_NAME#windows-}" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" *.zip --clobber
+          gh release upload "$GITHUB_REF_NAME" *.zip SHA256SUMS --clobber

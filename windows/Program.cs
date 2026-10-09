@@ -22,8 +22,13 @@ static class Program
             return;
         }
 
-        using var single = new Mutex(true, "ToolWheel.SingleInstance", out bool first);
-        if (!first) return;  // already running (it lives in the tray)
+        using var single = new Mutex(false, "ToolWheel.SingleInstance");
+        bool first;
+        // Already running (it lives in the tray)? Just after an update, wait for the old copy to quit instead.
+        try { first = single.WaitOne(Array.IndexOf(args, "--updated") >= 0 ? 10_000 : 0); }
+        catch (AbandonedMutexException) { first = true; }
+        if (!first) return;
+        Updater.CleanUp();
         try { LaunchAtLogin.MigrateRunKey(); } catch { }  // never worth failing to start over
 
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
@@ -87,6 +92,11 @@ sealed class Controller
             Visible = true,
         };
         tray.DoubleClick += (_, _) => OpenSettings();
+        menu.Items.Insert(1, new System.Windows.Forms.ToolStripMenuItem("Check for updates", null, async (_, _) =>
+        {
+            string message = await CheckNow();
+            if (message.Length > 0) tray.ShowBalloonTip(3000, "Tool Wheel", message, System.Windows.Forms.ToolTipIcon.None);
+        }));
         if (firstRun)
             tray.ShowBalloonTip(5000, "Tool Wheel is running", $"Hold {Keys.Describe(config.Trigger, config.Button)} anywhere to open the wheel.", System.Windows.Forms.ToolTipIcon.None);
 
@@ -96,6 +106,7 @@ sealed class Controller
             handled = true;
             TurnOnOff();
         };
+        CheckAtLaunch();
 
         // ponytail: polls key state at 60Hz, which needs no keyboard hook. Switch to a low-level hook if a
         // non-modifier shortcut (e.g. Ctrl+Space) is ever wanted. (A side-button shortcut adds a mouse hook; see Native.)
@@ -195,6 +206,52 @@ sealed class Controller
         badge.Flash(on);
     }
 
+    UpdateWindow? updatePrompt;
+
+    /// Once, a few seconds after launch: says nothing unless there's an update the user hasn't skipped.
+    async void CheckAtLaunch()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(5));
+        if (config.CheckForUpdates == false) return;
+        try
+        {
+            if (await Updater.CheckAsync() is { } release && release.Version.ToString() != config.SkipVersion) ShowUpdate(release);
+        }
+        catch (Exception e) { System.Diagnostics.Debug.WriteLine($"Update check failed: {e.Message}"); }
+    }
+
+    /// "Check now" in Settings or the tray: shows the update even if it was skipped. Returns "" when it did, otherwise
+    /// what to tell the user.
+    async Task<string> CheckNow()
+    {
+        if (Updater.IsDevBuild) return "Development builds don't update";
+        try
+        {
+            if (await Updater.CheckAsync() is not { } release) return "Tool Wheel is up to date";
+            ShowUpdate(release);
+            return "";
+        }
+        catch (Exception) { return "Couldn't reach GitHub"; }
+    }
+
+    void ShowUpdate(Updater.Release release)
+    {
+        if (updatePrompt is null)
+        {
+            updatePrompt = new UpdateWindow(release, skip: () =>
+            {
+                var saved = Store.Load();
+                saved.SkipVersion = release.Version.ToString();
+                Store.Save(saved);
+                config = saved;
+                configStamp = File.GetLastWriteTimeUtc(Store.ConfigPath);
+            }, restart: Quit);
+            updatePrompt.Closed += (_, _) => updatePrompt = null;
+            updatePrompt.Show();
+        }
+        updatePrompt.Activate();
+    }
+
     /// The tray icon at 35% opacity, for while the wheel is off.
     static System.Drawing.Icon Faded(System.Drawing.Icon icon)
     {
@@ -225,7 +282,7 @@ sealed class Controller
             {
                 config = saved;
                 configStamp = File.GetLastWriteTimeUtc(Store.ConfigPath);
-            });
+            }, CheckNow);
             settings.Closed += (_, _) => { settings = null; WatchSideButton(); };
             settings.Show();
             WatchSideButton();  // the wheel's shortcut rests while Settings is open
@@ -281,7 +338,7 @@ static class Snapshot
         Window window;
         if (settings)
         {
-            window = new SettingsWindow(Store.Load(), _ => { });
+            window = new SettingsWindow(Store.Load(), _ => { }, () => Task.FromResult(""));
             content = (FrameworkElement)window.Content;
         }
         else

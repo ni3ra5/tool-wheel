@@ -43,6 +43,8 @@ public class Config
     public int? ToggleKey { get; set; }
     public int? ToggleModifiers { get; set; }
     public bool? ReleaseToOpen { get; set; }
+    public bool? CheckForUpdates { get; set; }  // at launch; null means yes
+    public string? SkipVersion { get; set; }    // "Skip this version" on the update prompt
 
     /// The on/off shortcut, or null for none. It needs at least one modifier, or it would swallow a key everywhere.
     [JsonIgnore] public (Mods Mods, int Key)? Toggle => ToggleKey is int k && ToggleModifiers is int m && m != 0 ? ((Mods)m, k) : null;

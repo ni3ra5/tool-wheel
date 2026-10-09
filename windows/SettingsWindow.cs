@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -30,6 +31,7 @@ sealed class SettingsWindow : Window
 
     readonly Config config;
     readonly Action<Config> changed;
+    readonly Func<Task<string>> checkNow;  // "" when an update was found and shown, else what to say
     readonly WheelView preview = new(editing: true);
     readonly Canvas pills = new() { Width = EditorSize, Height = EditorSize };
     readonly Dictionary<string, Pill> pillsByTool = new(StringComparer.OrdinalIgnoreCase);
@@ -44,10 +46,11 @@ sealed class SettingsWindow : Window
 
     public IntPtr Handle { get; private set; }
 
-    public SettingsWindow(Config config, Action<Config> changed)
+    public SettingsWindow(Config config, Action<Config> changed, Func<Task<string>> checkNow)
     {
         this.config = config;
         this.changed = changed;
+        this.checkNow = checkNow;
         Title = "Tool Wheel Settings";
         ResizeMode = ResizeMode.CanMinimize;
         SizeToContent = SizeToContent.WidthAndHeight;
@@ -109,6 +112,7 @@ sealed class SettingsWindow : Window
         var right = new DockPanel { Width = 330 - 48, Margin = new Thickness(24, 20, 24, 20), LastChildFill = true };
         right.Children.Add(Docked(new TextBlock { Text = "Add tools", FontFamily = Look.Text, FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = White(0.9) }, Dock.Top));
         right.Children.Add(Docked(searchBox, Dock.Top));
+        right.Children.Add(Docked(UpdatesFooter(), Dock.Bottom));
         right.Children.Add(scroll);
 
         var root = new Grid
@@ -495,22 +499,58 @@ sealed class SettingsWindow : Window
 
     // ---- Bottom row ----
 
-    FrameworkElement LoginSwitch()
+    FrameworkElement LoginSwitch() => Switch("Open at login", () => LaunchAtLogin.IsEnabled, LaunchAtLogin.Set);
+
+    static FrameworkElement Switch(string label, Func<bool> get, Action<bool> set)
     {
         var knob = new Ellipse { Width = 14, Height = 14, Fill = Brushes.White, Margin = new Thickness(2) };
         var track = new Border { Width = 32, Height = 18, CornerRadius = new CornerRadius(9), Child = knob, Cursor = Cursors.Hand };
         void Show()
         {
-            bool on = LaunchAtLogin.IsEnabled;
+            bool on = get();
             track.Background = on ? Look.AccentBrush : White(0.18);
             knob.HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left;
         }
-        track.MouseLeftButtonUp += (_, _) => { LaunchAtLogin.Set(!LaunchAtLogin.IsEnabled); Show(); };
+        track.MouseLeftButtonUp += (_, _) => { set(!get()); Show(); };
         Show();
         return new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Children = { track, new TextBlock { Text = "Open at login", FontFamily = Look.Text, FontSize = 12, Foreground = White(0.6), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center } },
+            Children = { track, new TextBlock { Text = label, FontFamily = Look.Text, FontSize = 12, Foreground = White(0.6), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center } },
+        };
+    }
+
+    /// Under the app list: the version (swapped for the result of "Check now" for a few seconds) with "Check now" on
+    /// the right, then whether to check at launch. Same as the Mac's footer.
+    FrameworkElement UpdatesFooter()
+    {
+        string versionText = Updater.IsDevBuild ? "Development build" : $"Version {Updater.Current}";
+        var version = new TextBlock { Text = versionText, FontFamily = Look.Text, FontSize = 12, Foreground = White(0.35), VerticalAlignment = VerticalAlignment.Center };
+        var now = new TextBlock { Text = "Check now", FontFamily = Look.Text, FontSize = 12, Foreground = White(0.6), VerticalAlignment = VerticalAlignment.Center, Cursor = Cursors.Hand, Background = Brushes.Transparent };
+        var back = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        void Result(string? text)
+        {
+            version.Text = text ?? versionText;
+            version.Foreground = White(text is null ? 0.35 : 0.6);
+        }
+        back.Tick += (_, _) => { back.Stop(); Result(null); };
+        now.MouseEnter += (_, _) => now.Foreground = Look.AccentBrush;
+        now.MouseLeave += (_, _) => now.Foreground = White(0.6);
+        now.MouseLeftButtonUp += async (_, _) =>
+        {
+            back.Stop();
+            Result("Checking…");
+            string message = await checkNow();
+            Result(message.Length > 0 ? message : null);
+            if (message.Length > 0) back.Start();
+        };
+        DockPanel.SetDock(now, Dock.Right);
+        var automatic = Switch("Check for updates at launch", () => config.CheckForUpdates != false, on => { config.CheckForUpdates = on ? null : false; Save(); });
+        automatic.Margin = new Thickness(0, 10, 0, 0);
+        return new Border
+        {
+            BorderBrush = White(0.06), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 12, 0, 0), Margin = new Thickness(0, 12, 0, 0),
+            Child = new StackPanel { Children = { new DockPanel { Children = { now, version } }, automatic } },
         };
     }
 

@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${1:-0.1.0}"
+VERSION="${1:-0.0.0}"  # 0.0.0 = a local build, which never offers updates
 APP="dist/Tool Wheel.app"
 
 # One build per architecture, merged with lipo (works with just the Command Line Tools, no Xcode needed).

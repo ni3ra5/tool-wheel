@@ -17,10 +17,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: scripts/build-app.sh "${GITHUB_REF_NAME#mac-v}"
+      - run: cd dist && shasum -a 256 *.zip > SHA256SUMS  # the in-app updater checks its download against this
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --title "Tool Wheel for Mac ${GITHUB_REF_NAME#mac-}" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber
+          gh release upload "$GITHUB_REF_NAME" dist/*.zip dist/SHA256SUMS --clobber

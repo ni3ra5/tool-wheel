@@ -71,6 +71,7 @@ The Settings window lets you:
 - **change the shortcut** (two or more of ⌃ ⌥ ⇧ ⌘, or a mouse side button on its own or with keys), or restore the default,
 - set a **shortcut that turns the wheel off and on** (e.g. ⌃⌥P; none by default),
 - choose to **open apps by** clicking or by releasing the shortcut,
+- **check for updates** at launch or on demand; when there's a new version it asks, then installs it and restarts,
 - **open at login**.
 
 Everything is saved to a `tools.json` (`~/.config/toolwheel/` on macOS, `%APPDATA%\ToolWheel\` on Windows):
