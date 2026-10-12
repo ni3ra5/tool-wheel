@@ -154,9 +154,15 @@ Newest at the bottom. Each entry: what was decided, and why.
   - Settings: a footer under the app list with the version (or "Development build") and **Check now** on the right (which shows a skipped version too; the result replaces the version for 4 s), then a **Check for updates at launch** switch. Windows' tray menu also has **Check for updates**.
 - **Releases `windows-v0.2.0` and `mac-v0.5.0`**, minor bumps rather than patches for the new side-button and on/off shortcuts and in-app updates. The first releases with `SHA256SUMS`, so the first that later versions can update from.
 
+### 2026-10-12
+
+- **Mac: the click sound's audio engine starts off the main thread**, on a serial queue that also does stop and click. `AVAudioEngine.start()` took 320–430 ms on every open, because it wakes the audio hardware, and it ran inside `show()`, so the wheel appeared that much late. The engine still runs only while the wheel is open. A click made while the engine is still starting is dropped rather than played late.
+- **Mac: App Nap is turned off** (`beginActivity(.userInitiatedAllowingIdleSystemSleep)`), so the 60 Hz shortcut poll isn't throttled while no window is showing. The Mac can still sleep when idle.
+
 ## Next
 
 **Windows**
+- Check how long the wheel takes to appear: `Clicker.Start()` opens the WASAPI device on the UI thread as the wheel shows, the same pattern that delayed the Mac by ~0.3 s. If it's slow, move it off the UI thread.
 - Finish testing on a real PC; likely fixes: DPI/cursor maths across monitors, icon extraction.
 - Frosted backdrop (likely needs a WinUI/DWM approach).
 - `.lnk` tools (hand-edited JSON only) always start a new copy and get no "open" dot; resolve the shortcut target to match windows.

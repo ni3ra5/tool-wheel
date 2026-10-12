@@ -737,6 +737,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var settingsWindow: NSWindow?
     var waitForRelease = false  // after launching a tool, don't reopen until keys are let go
     var ticks = 0
+    /// Keeps App Nap from throttling the 60Hz poll while no window is showing, which would delay the wheel.
+    let awake = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Watching for the shortcut")
     var badge: Badge!
     var updateWindow: NSWindow?
 

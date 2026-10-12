@@ -11,6 +11,8 @@ final class Clicker {
     /// Spinning fast crosses many detents per frame; one click per this interval keeps clicks from piling up.
     let minInterval: TimeInterval = 0.05
     private var lastClick = Date.distantPast
+    /// Starting the engine wakes the audio hardware, which blocks for ~0.3 s; doing it here lets the wheel show at once.
+    private let audio = DispatchQueue(label: "ToolWheel.audio")
 
     init() {
         let rate = 44_100.0
@@ -36,19 +38,27 @@ final class Clicker {
 
     /// Audio runs only while the wheel is open.
     func start() {
-        try? engine.start()
-        player.play()
+        audio.async { [self] in
+            if (try? engine.start()) != nil { player.play() }
+        }
     }
 
     func stop() {
-        player.stop()
-        engine.pause()
+        audio.async { [self] in
+            player.stop()
+            engine.pause()
+        }
     }
 
     func click() {
         guard Date().timeIntervalSince(lastClick) >= minInterval else { return }
-        lastClick = Date()
-        player.scheduleBuffer(buffer, at: nil, options: .interrupts)
+        let at = Date()
+        lastClick = at
+        audio.async { [self] in
+            // A click made while the engine was still starting would sound late; drop it instead.
+            guard engine.isRunning, Date().timeIntervalSince(at) < minInterval else { return }
+            player.scheduleBuffer(buffer, at: nil, options: .interrupts)
+        }
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)  // felt only on a Force Touch trackpad
     }
 }
