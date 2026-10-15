@@ -205,7 +205,8 @@ sealed class WheelView : Grid
             Icon = tool.Expanded is { } path && Native.Icon(path, 128) is { } icon
                 ? new Image { Source = icon }
                 : new TextBlock { Text = "", FontFamily = Look.Glyphs, FontSize = 26, TextAlignment = TextAlignment.Center, Foreground = new SolidColorBrush(Color.FromRgb(0x47, 0x47, 0x47)) };
-            Icon.Width = Icon.Height = 44;
+            // Windows icons fill their canvas; macOS ones fill ~80% of the Mac's 44pt frame. Match the Mac's visible tile.
+            Icon.Width = Icon.Height = Icon is Image ? 36 : 44;
             RenderOptions.SetBitmapScalingMode(Icon, BitmapScalingMode.HighQuality);
             Polar.Place = Place;
         }

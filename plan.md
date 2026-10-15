@@ -160,6 +160,10 @@ Newest at the bottom. Each entry: what was decided, and why.
 - **Mac: the click sound's audio engine starts off the main thread**, on a serial queue that also does stop and click. `AVAudioEngine.start()` took 320–430 ms on every open, because it wakes the audio hardware, and it ran inside `show()`, so the wheel appeared that much late. The engine still runs only while the wheel is open. A click made while the engine is still starting is dropped rather than played late.
 - **Mac: App Nap is turned off** (`beginActivity(.userInitiatedAllowingIdleSystemSleep)`), so the 60 Hz shortcut poll isn't throttled while no window is showing. The Mac can still sleep when idle.
 
+### 2026-10-15
+
+- **Windows: app icons in the wheel's slots are 36 px, not 44 px** (the user's ask: too big). macOS app icons have built-in padding, so on the Mac's 44 pt frame the visible tile is only ~35 pt. Windows shell icons fill their whole canvas, so at 44 px they looked bigger than on the Mac. At 36 px the visible size matches the Mac, so the Mac is unchanged. The fallback glyph stays at 26 px in a 44 px box.
+
 ## Next
 
 **Windows**
