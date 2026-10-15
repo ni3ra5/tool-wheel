@@ -72,10 +72,9 @@ sealed class SettingsWindow : Window
         };
         editor.Children.Add(emptyHint);
 
-        var left = new Grid { Width = 529, Height = 580 };
+        var left = new Grid { Width = 529, Height = 620 };
         left.Children.Add(new Grid { Children = { editor }, VerticalAlignment = VerticalAlignment.Center });
-        left.Children.Add(Corner(LoginSwitch(), HorizontalAlignment.Left));
-        left.Children.Add(Corner(new StackPanel { Children = { ShortcutField(), ToggleField(), OpenMode() } }, HorizontalAlignment.Right));
+        left.Children.Add(BottomControls());
 
         // ---- Right: search the installed apps; click one to add or remove it ----
         search = new TextBox
@@ -117,7 +116,7 @@ sealed class SettingsWindow : Window
 
         var root = new Grid
         {
-            Width = 860, Height = 580,
+            Width = 860, Height = 620,
             Background = Look.DotGrid(Color.FromArgb(18, 255, 255, 255), 14),
             ColumnDefinitions = { new() { Width = new GridLength(529) }, new() { Width = new GridLength(1) }, new() { Width = new GridLength(330) } },
         };
@@ -155,12 +154,35 @@ sealed class SettingsWindow : Window
 
     static T Docked<T>(T element, Dock dock) where T : UIElement { DockPanel.SetDock(element, dock); return element; }
 
-    static FrameworkElement Corner(FrameworkElement content, HorizontalAlignment side)
+    /// Along the bottom of the wheel panel: the shortcut rows on the right, and the two switches on the left, each level
+    /// with a row (Open at login with the on/off shortcut, Check for updates with Open apps by).
+    FrameworkElement BottomControls()
     {
-        content.HorizontalAlignment = side;
-        content.VerticalAlignment = VerticalAlignment.Bottom;
-        content.Margin = new Thickness(20);
-        return content;
+        var grid = new Grid
+        {
+            VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(20),
+            ColumnDefinitions = { new() { Width = GridLength.Auto }, new(), new() { Width = GridLength.Auto } },
+            RowDefinitions = { new(), new(), new() },
+        };
+        void Place(FrameworkElement element, int row, int column)
+        {
+            Grid.SetRow(element, row);
+            Grid.SetColumn(element, column);
+            grid.Children.Add(element);
+        }
+        Place(ShortcutField(), 0, 2);
+        Place(ToggleField(), 1, 2);
+        Place(OpenMode(), 2, 2);
+        var login = LoginSwitch();
+        var updates = Switch("Check for updates at launch", () => config.CheckForUpdates != false, on => { config.CheckForUpdates = on ? null : false; Save(); });
+        foreach (var s in new[] { login, updates })
+        {
+            s.Margin = new Thickness(0, 12, 0, 0);  // the same top margin as the rows beside them, so the centres line up
+            s.VerticalAlignment = VerticalAlignment.Center;
+        }
+        Place(login, 1, 0);
+        Place(updates, 2, 0);
+        return grid;
     }
 
     void Save()
@@ -521,7 +543,7 @@ sealed class SettingsWindow : Window
     }
 
     /// Under the app list: the version (swapped for the result of "Check now" for a few seconds) with "Check now" on
-    /// the right, then whether to check at launch. Same as the Mac's footer.
+    /// the right. Same as the Mac's footer.
     FrameworkElement UpdatesFooter()
     {
         string versionText = Updater.IsDevBuild ? "Development build" : $"Version {Updater.Current}";
@@ -545,12 +567,10 @@ sealed class SettingsWindow : Window
             if (message.Length > 0) back.Start();
         };
         DockPanel.SetDock(now, Dock.Right);
-        var automatic = Switch("Check for updates at launch", () => config.CheckForUpdates != false, on => { config.CheckForUpdates = on ? null : false; Save(); });
-        automatic.Margin = new Thickness(0, 10, 0, 0);
         return new Border
         {
             BorderBrush = White(0.06), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 12, 0, 0), Margin = new Thickness(0, 12, 0, 0),
-            Child = new StackPanel { Children = { new DockPanel { Children = { now, version } }, automatic } },
+            Child = new DockPanel { Children = { now, version } },
         };
     }
 

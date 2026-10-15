@@ -224,9 +224,8 @@ struct UpdateView: View {
 }
 
 /// Under the app list in Settings: the version (swapped for the result of "Check now" for a few seconds) with "Check
-/// now" on the right, then whether to check at launch. Same as Windows' footer.
+/// now" on the right. Same as Windows' footer.
 struct UpdatesFooter: View {
-    @ObservedObject var store: SettingsStore
     @State private var result: String?
     @State private var hovering = false
 
@@ -242,26 +241,14 @@ struct UpdatesFooter: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text(result ?? (Updater.current == nil ? "Development build" : "Version \(Updater.currentText)"))
-                    .foregroundStyle(.white.opacity(result == nil ? 0.35 : 0.6))
-                Spacer(minLength: 8)
-                Button("Check now") { check() }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(hovering ? accent : .white.opacity(0.6))
-                    .onHover { hovering = $0 }
-            }
-            HStack(spacing: 8) {
-                Toggle("Check for updates at launch", isOn: Binding(
-                    get: { store.config.checkForUpdates != false },
-                    set: { store.config.checkForUpdates = $0 ? nil : false }
-                ))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .labelsHidden()
-                Text("Check for updates at launch").foregroundStyle(.white.opacity(0.6))
-            }
+        HStack(spacing: 8) {
+            Text(result ?? (Updater.current == nil ? "Development build" : "Version \(Updater.currentText)"))
+                .foregroundStyle(.white.opacity(result == nil ? 0.35 : 0.6))
+            Spacer(minLength: 8)
+            Button("Check now") { check() }
+                .buttonStyle(.plain)
+                .foregroundStyle(hovering ? accent : .white.opacity(0.6))
+                .onHover { hovering = $0 }
         }
         .font(.system(size: 12))
         .padding(.top, 12)

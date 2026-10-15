@@ -511,6 +511,18 @@ struct SettingsView: View {
         }
     }
 
+    func switchRow(_ label: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 8) {
+            Toggle(label, isOn: isOn)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.6))
+        }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             ZStack {
@@ -522,41 +534,46 @@ struct SettingsView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay(alignment: .bottomLeading) {
-                HStack(spacing: 8) {
-                    Toggle("Open at login", isOn: Binding(
-                        get: { launchAtLogin },
-                        set: { LaunchAtLogin.set($0); launchAtLogin = LaunchAtLogin.isEnabled }
-                    ))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-                    Text("Open at login")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.6))
-                }
-                .padding(20)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                VStack(alignment: .trailing, spacing: 12) {
-                    ShortcutField(store: store)
-                    ToggleField(store: store)
-                    HStack(spacing: 8) {
-                        Text("Open apps by")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.6))
-                        Picker("Open apps by", selection: Binding(
-                            get: { store.config.releaseToOpen ?? false },
-                            set: { store.config.releaseToOpen = $0 }
-                        )) {
-                            Text("Click").tag(false)
-                            Text("Release").tag(true)
+            .overlay(alignment: .bottom) {
+                // The shortcut rows on the right, and the two switches on the left, each level with a row (Open at login
+                // with the on/off shortcut, Check for updates with Open apps by). Same as Windows.
+                Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 12) {
+                    GridRow {
+                        Color.clear.frame(width: 0, height: 0)
+                        Spacer(minLength: 8)
+                        ShortcutField(store: store).gridColumnAlignment(.trailing)
+                    }
+                    GridRow {
+                        switchRow("Open at login", isOn: Binding(
+                            get: { launchAtLogin },
+                            set: { LaunchAtLogin.set($0); launchAtLogin = LaunchAtLogin.isEnabled }
+                        ))
+                        Spacer(minLength: 8)
+                        ToggleField(store: store)
+                    }
+                    GridRow {
+                        switchRow("Check for updates at launch", isOn: Binding(
+                            get: { store.config.checkForUpdates != false },
+                            set: { store.config.checkForUpdates = $0 ? nil : false }
+                        ))
+                        Spacer(minLength: 8)
+                        HStack(spacing: 8) {
+                            Text("Open apps by")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.white.opacity(0.6))
+                            Picker("Open apps by", selection: Binding(
+                                get: { store.config.releaseToOpen ?? false },
+                                set: { store.config.releaseToOpen = $0 }
+                            )) {
+                                Text("Click").tag(false)
+                                Text("Release").tag(true)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .controlSize(.small)
+                            .fixedSize()
+                            .help("Release: hover a tool and let go of the shortcut to open it")
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .controlSize(.small)
-                        .fixedSize()
-                        .help("Release: hover a tool and let go of the shortcut to open it")
                     }
                 }
                 .padding(20)
@@ -590,7 +607,7 @@ struct SettingsView: View {
                 .scrollIndicators(.never)
                 .padding(.horizontal, -10)  // rows carry their own inset
 
-                UpdatesFooter(store: store)
+                UpdatesFooter()
                     .padding(.top, -14)  // the stack's spacing; the footer brings its own
 
             }
@@ -598,7 +615,7 @@ struct SettingsView: View {
             .padding(.vertical, 20)
             .frame(width: 330)
         }
-        .frame(width: 860, height: 580)
+        .frame(width: 860, height: 620)
         .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.08)).frame(height: 1) }  // under the title bar
         .background {
             ZStack {

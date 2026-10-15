@@ -153,6 +153,7 @@ Newest at the bottom. Each entry: what was decided, and why.
   - Tested on Windows end to end: a local build labelled 0.1.9 found the real `windows-v0.2.0`, downloaded and verified it (~8 s for 70 MB), swapped itself and came back as 0.2.0 with the `.old` copy cleaned up.
   - Settings: a footer under the app list with the version (or "Development build") and **Check now** on the right (which shows a skipped version too; the result replaces the version for 4 s), then a **Check for updates at launch** switch. Windows' tray menu also has **Check for updates**.
 - **Releases `windows-v0.2.0` and `mac-v0.5.0`**, minor bumps rather than patches for the new side-button and on/off shortcuts and in-app updates. The first releases with `SHA256SUMS`, so the first that later versions can update from.
+- **Settings is 40 px taller (580 → 620) and both switches sit at the bottom left** (the user's call): "Open at login" level with the on/off shortcut row, "Check for updates at launch" (moved out of the right-hand footer) level with "Open apps by". The bottom controls are one grid, so the switches line up with the rows beside them; the longer label sits on the bottom row, where it can't meet the on/off row's "used by another app" message. The footer under the app list keeps just the version and Check now. The wheel keeps its offset, so it gains room above the shortcut rows. Mac and Windows.
 
 ### 2026-10-12
 
